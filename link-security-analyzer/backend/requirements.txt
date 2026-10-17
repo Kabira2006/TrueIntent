@@ -1,0 +1,30 @@
+# TrueIntent link-security-analyzer backend — pinned 2026-10-16.
+# Verified with `pip install -r requirements.txt` on Python 3.10.9.
+# Docker images use Python 3.11 (see backend/Dockerfile).
+# playwright is pinned to 1.63.0 to match the official Playwright Docker
+# image tag mcr.microsoft.com/playwright/python:v1.63.0-jammy used by the
+# worker. The 1.64.0 pip package exists but has no Docker image tag yet.
+fastapi==0.143.2
+uvicorn[standard]==0.54.0
+celery==5.6.3
+redis==8.1.0
+SQLAlchemy==2.0.54
+alembic==1.20.0
+asyncpg==0.32.0
+psycopg2-binary==2.9.13
+pydantic==2.14.1
+pydantic-settings==2.15.0
+python-dotenv==1.2.4
+httpx==0.28.1
+tldextract==5.4.0
+idna==3.20
+asyncwhois==1.1.15
+dnspython==2.8.0
+cryptography==50.0.2
+pyOpenSSL==26.4.0
+beautifulsoup4==4.15.0
+playwright==1.63.0
+ImageHash==4.3.2
+Pillow==12.3.0
+pytest==9.1.1
+pytest-asyncio==1.4.0

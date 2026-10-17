@@ -1,0 +1,25 @@
+# TrueIntent Celery worker (background browser sandbox).
+# Uses the official Playwright Python image whose version matches the pinned
+# `playwright` package in requirements.txt (playwright==1.63.0), so the
+# bundled Chromium already works and no `playwright install` is needed.
+# NOTE: the 1.64.0 pip package exists, but MCR has no v1.64.0 image tag yet,
+# so both are pinned to 1.63.0.
+FROM mcr.microsoft.com/playwright/python:v1.63.0-jammy
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /code
+
+COPY requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY app ./app
+
+# The Playwright image ships a non-root `pwuser`; run as that user so
+# hostile pages are never opened as root.
+USER pwuser
+
+# Chunk 5 adds app/workers/celery_app.py; until then this command waits for it.
+CMD ["celery", "-A", "app.workers.celery_app:celery_app", "worker", "--loglevel=info"]
