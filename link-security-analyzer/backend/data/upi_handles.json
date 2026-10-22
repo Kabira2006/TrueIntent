@@ -1,0 +1,37 @@
+{
+  "known_handles": [
+    "okhdfcbank",
+    "oksbi",
+    "okicici",
+    "okaxis",
+    "ybl",
+    "ibl",
+    "axl",
+    "paytm",
+    "apl",
+    "upi"
+  ],
+  "brand_keywords": [
+    "sbi",
+    "hdfc",
+    "icici",
+    "axis",
+    "paytm",
+    "google",
+    "phonepe",
+    "amazon",
+    "flipkart"
+  ],
+  "authority_words": [
+    "bank",
+    "police",
+    "govt",
+    "government",
+    "refund",
+    "support"
+  ],
+  "amount_thresholds": {
+    "medium": "1000",
+    "high": "10000"
+  }
+}

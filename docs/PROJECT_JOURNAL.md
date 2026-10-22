@@ -9,7 +9,8 @@ If you do not code, start here. Read the "In one minute" section of the latest c
 ## Table of contents
 - [Chapter 0: The big picture and setup](#chapter-0-the-big-picture-and-setup)
 - [Chapter 1: Infrastructure, config and database](#chapter-1-infrastructure-config-and-database)
-- Chapters 2 to 9: to be appended, one per chunk (placeholders, not written yet).
+- [Chapter 3: Understanding what was pasted (input router and UPI links)](#chapter-3-understanding-what-was-pasted-input-router-and-upi-links)
+- Chapters 2 and 4 to 9: to be appended, one per chunk.
 
 ## Chapter 0: The big picture and setup
 Date: 2026-10-16 | Commit message: chunk-0: repo rules, skeleton and journal
@@ -231,3 +232,128 @@ One command starts our private engine room: a notebook that remembers everything
 - Health check: a small question the server answers to prove it and its dependencies are alive.
 - CORS: rules that say which web pages may call the server.
 - Playwright image: a ready-made box that already contains a real browser.
+
+## Chapter 3: Understanding what was pasted (input router and UPI links)
+Date: 2026-10-22 | Commit message: chunk-3: input router and UPI analysis
+### 1. In one minute
+We added a first step that identifies whether pasted text is a web address, a UPI payment link, or other text from a QR code. We also added a parser that reads UPI payment fields and reports clues about those fields. It does not open links or decide what a person intended to do.
+
+### 2. Why we did this
+Different pasted inputs need different checks. A web address can be inspected as a URL, while a UPI link contains payment details that need their own explanation. A QR code is just a way to store text for a phone to read; that text may be a web link, a payment link, or a plain message. Routing first prevents those different things from being mistaken for one another.
+
+### 3. How it works
+```mermaid
+flowchart TD
+  A["Pasted text"] --> B["Trim and remove control marks"]
+  B --> C{"Input starts with UPI link?"}
+  C -->|Yes| D["UPI deep link"]
+  C -->|No| E{"Web address or domain?"}
+  E -->|Yes| F["URL"]
+  E -->|No| G["QR text"]
+  G --> H{"Contains a web or UPI link?"}
+  H -->|Yes| I["Record embedded link"]
+  H -->|No| J["Unrecognized text"]
+  D --> K["Parse UPI fields"]
+  I --> K
+```
+Caption: The router identifies the input shape first, then records a link found inside otherwise ordinary QR text.
+
+A UPI payment link is a specially shaped address that can open a payment app with information already filled in. For example:
+
+```text
+upi://pay?pa=demo%40okhdfcbank&pn=Demo%20Shop&am=25.00&tr=order-7&tn=Book&cu=INR&mode=02&mc=5812
+      |   |  |                    |                  |        |           |     |        |
+      |   |  pa                   pn                 am       tr          tn    cu       mode, mc
+      |   action
+      scheme
+```
+
+```mermaid
+flowchart LR
+  A["upi://"] --> B["pay: action"]
+  B --> C["? query fields"]
+  C --> D["pa: payee address"]
+  C --> E["pn: displayed name"]
+  C --> F["am: amount"]
+  C --> G["tr: reference"]
+  C --> H["tn: note"]
+  C --> I["cu: currency"]
+  C --> J["mode and mc: payment details"]
+```
+Caption: The left side selects the UPI action; the query after the question mark carries optional payment details.
+
+The field names mean:
+
+| Field | What it means |
+|---|---|
+| `pa` | Payee virtual payment address (VPA), the destination payment address. |
+| `pn` | Payee name shown by the link. |
+| `am` | Amount filled into the payment form. |
+| `tr` | Transaction reference supplied by the link. |
+| `tn` | Note or message attached to the payment. |
+| `cu` | Currency code, such as INR for Indian rupees. |
+| `mode` | Payment mode hint supplied by the link. |
+| `mc` | Merchant category code supplied by the link. |
+
+A `pay` link prepares a payment to a named destination. A `collect` link asks the person who opens it to approve a payment request; a `mandate` link also relates to a payment authorization. Scammers sometimes call a collect request a refund, hoping someone will approve money going out. The indicator therefore explains what the link asks for and says plainly: you never need a PIN to receive money.
+
+A QR code is a printed or displayed pattern that encodes data, much like a label that a camera can read. The code itself does not prove what is behind it. This router handles the decoded text, finds a first web or UPI link when present, and leaves ordinary text recognizable as text.
+
+The module reports facts written in the link. It cannot know whether the person expects to receive money, recognizes the payee, or meant to make a payment. That is the honest limit: link contents alone do not reveal the user's situation.
+
+| Indicator code | Plain meaning | Example |
+|---|---|---|
+| `UPI_COLLECT_REQUEST` | The action is collect or mandate, which asks for payment approval. | `upi://collect?pa=demo@oksbi` |
+| `INVALID_VPA_FORMAT` | The payee address does not match the expected shape. | `pa=not-a-vpa` |
+| `UNKNOWN_PSP_HANDLE` | The address suffix is absent from the editable known-handle list; this is low severity only. | `pa=demo@samplehandle` |
+| `PREFILLED_AMOUNT` | The link already contains an amount; configured thresholds raise its severity. | `am=10000` |
+| `PAYEE_NAME_BRAND_MISMATCH` | A brand or authority word in the displayed name is absent from the payment address. | `pn=Refund%20Support&pa=person@ybl` |
+| `MISSING_TRANSACTION_REF` | No transaction reference was supplied. | `upi://pay?pa=demo@oksbi` |
+| `NON_INR_CURRENCY` | The link names a currency other than INR. | `cu=USD` |
+| `SUSPICIOUS_NOTE_TEXT` | The note includes urgency, refund, or verification wording. | `tn=Urgent%20refund` |
+| `UPI_EMBEDDED_IN_WEB_URL` | An HTTPS web address carries `pa` or `pn` query fields. | `https://example.com/pay?pa=demo%40oksbi` |
+| `MALFORMED_UPI_URI` | The URI cannot be parsed as a supported UPI action. | `upi://unknown` |
+
+The VPA examples use made-up `demo` or `person` names and example-style links; no live payment recipient is shown.
+
+### 4. Decisions and reasoning
+| decision | options considered | why we chose this | trade-off |
+|---|---|---|---|
+| Separate routing and UPI parsing | One function for every input, or two pure functions | Each function has one clear job and can be tested without network access. | Callers compose the two steps. |
+| Pydantic models for results | Untyped dictionaries or shared typed models | One consistent indicator shape protects the contract used by later modules. | Callers must use the defined model fields. |
+| Editable JSON lists and thresholds | Hard-code handles and amounts | Teammates can adjust the known handles, terminology, and severity thresholds without editing parser logic. | A bad configuration can affect classifications. |
+| Treat absent facts as absent | Guess the user's intent or mark the link fraudulent | Link text cannot show the user's expectations or full context. | The report cannot make a final judgment. |
+
+### 5. What we built
+- `link-security-analyzer/backend/app/core/models.py`: shared typed indicator and result models.
+- `link-security-analyzer/backend/app/core/input_router.py`: input cleanup, type classification, and embedded-link extraction.
+- `link-security-analyzer/backend/app/core/upi.py`: URI and web-query parsing plus UPI indicators.
+- `link-security-analyzer/backend/data/upi_handles.json`: editable PSP handles, terminology, and amount thresholds.
+- `link-security-analyzer/backend/tests/test_input_router_upi.py`: table-driven pure unit tests.
+- `docs/PROJECT_JOURNAL.md`: this chapter and its table-of-contents entry.
+
+### 6. What actually happened
+The backend test suite reported 42 passed in 5.28 seconds after the final code and formatting changes. The new test file covers 37 cases; the other 5 tests are from earlier chunks. Ruff passed repository-wide from the backend directory, and Ruff formatting reported all four changed Python files formatted.
+
+An edge case that needed a correction was length checking: whitespace surrounding a short value should not cause rejection, so the router trims before applying the 2,048-character limit. Text containing only zero-width marks becomes empty and is rejected. Percent-encoded Unicode in the payee name decodes correctly. Invalid URI syntax returns an explicit malformed-link indicator instead of crashing. No network, database, or Redis calls are made by these modules or tests.
+
+### 7. Limits and honest weaknesses
+- The parser reports link contents only. It does not know whether a user expects to pay or receive money.
+- The known handles and terminology are an editable list, not a live authoritative directory.
+- A low-severity unknown handle may be new or legitimate; it is not a fraud verdict.
+- Severity thresholds and wording are simple heuristics, not evidence of a scam.
+- Python 3.11 was not available in this environment; tests ran using Python 3.10.9.
+- The whole-repository Ruff check has existing import-order findings that were not changed in this chunk.
+
+### 8. How to explain this to a judge in 30 seconds
+Before checking a link, we identify what kind of text someone pasted. A UPI link can contain the recipient, amount, and payment note, so we explain those facts and flag patterns like a request to approve a payment. We do not guess the user's intent: the same link text cannot tell us whether they expected that payment.
+
+### 9. New terms
+- Router: a first sorting step that sends different input types to the right check.
+- UPI: India's Unified Payments Interface, a system for sending money between payment apps and bank accounts.
+- Deep link: a special address that opens a particular screen or action in an app.
+- VPA: a virtual payment address, the text address used to identify a UPI payment destination.
+- PSP handle: the provider name after `@` in a VPA, such as `oksbi`.
+- Query field: a named value after `?` in a link, with fields separated by `&`.
+- Percent encoding: a way to represent special characters in a URL, such as `%40` for `@`.
+- QR code: a camera-readable pattern that stores text or other data.
