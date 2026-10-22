@@ -24,6 +24,8 @@ class Settings(BaseSettings):
 
     whois_timeout_seconds: float = Field(default=3.0)
     dns_timeout_seconds: float = Field(default=2.0)
+    netguard_denylist: str = Field(default="localhost,redis,postgres,backend,worker")
+    threat_feed_timeout_seconds: float = Field(default=3.0)
     fast_path_budget_seconds: float = Field(default=5.0)
     sandbox_enabled: bool = Field(default=True)
     sandbox_page_timeout_seconds: int = Field(default=15)

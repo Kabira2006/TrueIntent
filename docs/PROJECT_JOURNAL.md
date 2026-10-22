@@ -10,7 +10,8 @@ If you do not code, start here. Read the "In one minute" section of the latest c
 - [Chapter 0: The big picture and setup](#chapter-0-the-big-picture-and-setup)
 - [Chapter 1: Infrastructure, config and database](#chapter-1-infrastructure-config-and-database)
 - [Chapter 3: Understanding what was pasted (input router and UPI links)](#chapter-3-understanding-what-was-pasted-input-router-and-upi-links)
-- Chapters 2 and 4 to 9: to be appended, one per chunk.
+- [Chapter 4: Safe network checks (netguard, domain age, threat feeds)](#chapter-4-safe-network-checks-netguard-domain-age-threat-feeds)
+- Chapters 2 and 5 to 9: to be appended, one per chunk.
 
 ## Chapter 0: The big picture and setup
 Date: 2026-10-16 | Commit message: chunk-0: repo rules, skeleton and journal
@@ -357,3 +358,134 @@ Before checking a link, we identify what kind of text someone pasted. A UPI link
 - Query field: a named value after `?` in a link, with fields separated by `&`.
 - Percent encoding: a way to represent special characters in a URL, such as `%40` for `@`.
 - QR code: a camera-readable pattern that stores text or other data.
+
+## Chapter 4: Safe network checks (netguard, domain age, threat feeds)
+Date: 2026-10-22 | Commit message: chunk-4: netguard, infrastructure checks and threat feeds
+### 1. In one minute
+We added a gate that checks a destination before our server looks it up or connects to it. We also added domain-registration and DNS clues, plus lookups against two existing threat lists. Tests use fake network services, so they check the decisions without contacting real servers.
+
+### 2. Why we did this
+Server-side request forgery (SSRF) is when someone tricks our server into visiting a place the public should not reach. Imagine a hostile link that tells our server to fetch a private cloud address, such as the machine's metadata service at `169.254.169.254`. The attacker may hope the server returns secrets or internal data. A browser user's computer and our analysis server are different visitors; this gate protects our server.
+
+### 3. How it works
+```mermaid
+flowchart TD
+  A["Receive URL or host"] --> B{"Valid HTTP or HTTPS?"}
+  B -->|No| C["Block invalid scheme"]
+  B -->|Yes| D{"Denied hostname?"}
+  D -->|Yes| E["Block local or internal name"]
+  D -->|No| F["Normalize IP spelling"]
+  F --> G{"IP literal?"}
+  G -->|Yes| H["Check address ranges"]
+  G -->|No| I["Resolve A and AAAA records"]
+  I --> H
+  H --> J{"Any address private or special?"}
+  J -->|Yes| K["Block before connecting"]
+  J -->|No| L["Return validated addresses"]
+```
+Caption: Every returned address is checked; one private or special address is enough to block the destination.
+
+```mermaid
+sequenceDiagram
+  participant U as "URL check"
+  participant N as "Netguard"
+  participant D as "Public DNS"
+  participant C as "Domain cache"
+  participant R as "RDAP or WHOIS"
+  participant T as "Threat feeds"
+  participant A as "Result"
+  U->>N: "Validate destination"
+  N->>D: "Resolve A and AAAA"
+  D-->>N: "Return address answers"
+  N-->>A: "Block if any answer is private"
+  N->>C: "Look for a record newer than seven days"
+  alt "Fresh cache record"
+    C-->>A: "Use registration age"
+  else "Cache miss or stale record"
+    C->>R: "Try RDAP, then WHOIS, within three seconds"
+    alt "Lookup times out or fails"
+      R-->>A: "Return UNKNOWN and an info clue"
+    else "Registration date found"
+      R-->>A: "Return date and registrar facts"
+    end
+  end
+  U->>T: "Look up prior feed reports"
+  T-->>A: "Return match, no report, or unavailable"
+```
+Caption: One destination is checked before its public data is queried, and a registry timeout becomes UNKNOWN instead of an invented age.
+
+Netguard accepts web URLs and hostnames. A hostname is first resolved to its IPv4 and IPv6 addresses. It blocks the whole destination if any returned address is private, loopback, link-local, multicast, reserved, unspecified, carrier-grade shared space, or otherwise not globally routable. IPv4 addresses embedded in IPv6 addresses receive the same check. It also blocks `localhost`, names ending in `.local` or `.internal`, and configured service names such as `redis`, `postgres`, `backend`, and `worker`.
+
+Some software accepts unusual spellings of an IP address. Netguard normalizes numeric decimal, hexadecimal, and traditional leading-zero octal IPv4 forms before deciding whether to allow them. For example, decimal `2130706433`, hex `0x7f000001`, and octal `0177.0.0.1` all describe the loopback address `127.0.0.1`, so all are blocked. The configurable list is `NETGUARD_DENYLIST` in `.env`.
+
+| Blocked address type | Example range or address | Why it is blocked |
+|---|---|---|
+| Private IPv4 | `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` | These addresses are for private networks, not public destinations. |
+| Loopback IPv4 and IPv6 | `127.0.0.0/8`, `::1/128` | These refer back to the same machine. |
+| Link-local IPv4 and IPv6 | `169.254.0.0/16`, `fe80::/10` | These are local network addresses; cloud metadata commonly uses `169.254.169.254`. |
+| Carrier-grade shared IPv4 | `100.64.0.0/10` | This is shared provider space, not a public service destination. |
+| Multicast IPv4 and IPv6 | `224.0.0.0/4`, `ff00::/8` | These address groups of machines, not an ordinary public host. |
+| Unspecified addresses | `0.0.0.0/32`, `::/128` | These do not identify a public destination. |
+| Reserved or otherwise non-global ranges | Address classifications marked reserved or non-global | Special-purpose ranges are not treated as public targets. |
+| IPv4-mapped IPv6 | `::ffff:127.0.0.1` | The embedded IPv4 address is checked too. |
+
+A domain's age is a clue because some abusive domains are registered shortly before they are used, though a new domain can also be legitimate. RDAP and WHOIS are public domain-registration lookup systems, like checking a business registration record. The module checks the database's `domain_records` entry first and uses it only if its refresh time is within seven days. Otherwise it asks RDAP using the bundled Internet Assigned Numbers Authority (IANA) `dns.json` registry map, then falls back to the installed asyncwhois library. Registration under 7 days is high, under 30 is medium, and under 90 is low severity. A registrar name suggesting privacy or proxy service is an info-level clue only.
+
+The registration lookup has a three-second overall deadline. The repository already set `WHOIS_TIMEOUT_SECONDS` to 3 seconds before this chunk; we retained that instead of a one-second draft because a one-second deadline can turn ordinary registry delay into UNKNOWN. We did not benchmark real registry response times. If a lookup fails, the result is UNKNOWN with an info clue—not a guessed age.
+
+DNS checks request A (IPv4), AAAA (IPv6), MX (mail server), and NS (name server) records with the configured DNS timeout. Missing A and MX records are info clues; many real websites do not accept email and therefore have no MX record. Five or more A records with a minimum time-to-live of 60 seconds or less produce a low-severity fast-flux-like clue. That pattern is only a clue, not a conclusion.
+
+Google Safe Browsing and VirusTotal are services that maintain reports about web addresses. Google Safe Browsing's `threatMatches:find` API requires the submitted URL in its request, so Google receives that URL during the check. VirusTotal is different here: we only use its GET endpoint to look up a previously existing report using the URL's base64url identifier; we never call its upload or scan endpoint. Both results are cached for 24 hours under a SHA-256 hash of the URL, rather than a plaintext URL cache key. VirusTotal lookups also use Redis counters capped at 4 per minute and 500 per day. Missing keys, exhausted limits, timeouts, or feed errors result in UNAVAILABLE, not a claim that the URL has or lacks a threat.
+
+The guiding rule is: one failed check must never crash the scan. A failed database cache, registry, DNS query, or feed returns an explicit unknown or unavailable result where applicable. It does not get silently turned into a negative finding.
+
+### 4. Decisions and reasoning
+| decision | options considered | why we chose this | trade-off |
+|---|---|---|---|
+| Check both A and AAAA answers | Check one address family or both | A host must not pass when one family points inside a private network. | More DNS queries and a larger answer set to review. |
+| Reject a target if any answer is non-public | Use only the first DNS answer | Prevents a mixed public/private answer from hiding an internal address. | A badly configured host with one private answer is blocked. |
+| Normalize legacy numeric IP spellings | Parse only standard dotted IP text | Different URL handlers may interpret decimal, hex, and octal forms as IP literals. | Unusual numeric hostnames are rejected rather than looked up. |
+| Return UNKNOWN on registry failure | Guess an age or treat failure as old | Missing data is not evidence about registration age. | Some reports have fewer clues when a registry is slow. |
+| Use an existing VirusTotal report only | Submit the URL for a new scan | Avoids uploading the user's URL to VirusTotal. | A URL without an existing report remains unreported. |
+| Keep threat results for 24 hours | Ask external services for every scan | Reduces repeated requests and helps respect provider limits. | A cached answer can be up to a day old. |
+
+### 5. What we built
+- `link-security-analyzer/backend/app/core/netguard.py`: typed target errors, URL and hostname validation, numeric-IP normalization, DNS resolution, and public-address screening.
+- `link-security-analyzer/backend/app/core/infrastructure.py`: fresh database-cache lookup, RDAP/WHOIS domain age, registrar clue, and bounded DNS checks.
+- `link-security-analyzer/backend/app/core/threat_feeds.py`: Google Safe Browsing and VirusTotal lookups, hashed cache keys, and Redis-based VirusTotal limits.
+- `link-security-analyzer/backend/app/config.py` and `link-security-analyzer/.env.example`: denylist and threat-feed timeout settings.
+- `link-security-analyzer/backend/data/dns.json`: official IANA RDAP DNS bootstrap data, publication date 2026-09-30.
+- `link-security-analyzer/backend/tests/test_netguard.py`: blocked forms, private DNS answers, and public targets.
+- `link-security-analyzer/backend/tests/test_infrastructure.py`: mocked database cache, RDAP, WHOIS, timeout, and DNS cases.
+- `link-security-analyzer/backend/tests/test_threat_feeds.py`: mocked feed responses, API-key absence, cache, timeout, and rate-limit cases.
+- `docs/PROJECT_JOURNAL.md`: this chapter and its table-of-contents entry.
+
+### 6. What actually happened
+The full backend test run reported 106 passed in 6.74 seconds. The three new Chunk 4 test files collected 64 cases. All tests replace DNS, HTTP, and Redis with fakes; no real network, database, or feed query was made. `python -m ruff check .` reported All checks passed for the backend. Ruff formatting passed for the new modules and tests.
+
+The IANA bootstrap JSON parsed successfully and contains 592 RDAP service entries covering 1,203 top-level suffix entries. The most challenging edge cases were alternate numeric spellings of loopback addresses, IPv4-mapped IPv6, and a hostname whose A and AAAA answers contain a mix of public and private addresses. In each mixed-answer test, the private answer caused a block. DNS timeouts now fail closed in netguard, and partial DNS failures are marked unavailable rather than being reported as missing records. A domain string containing query syntax is rejected before any repository or registry lookup. Mocked timeout tests confirmed that registration becomes UNKNOWN and feed lookups become UNAVAILABLE. The first timeout test exposed that Python 3.10's asyncio timeout exception is distinct from the built-in `TimeoutError`; the catch was adjusted and the test now passes.
+
+### 7. Limits and honest weaknesses
+- DNS rebinding is not fully solved here. The guard checks and returns the addresses it saw, but a future caller that reconnects by hostname may trigger a second DNS lookup with different answers. A connection layer must pin the validated addresses and still verify the TLS hostname.
+- Google Safe Browsing receives the submitted URL in its lookup request. VirusTotal is restricted to looking up existing reports and does not receive an upload request.
+- External services and the PostgreSQL cache were mocked. Live RDAP, WHOIS, DNS, Redis, and provider behavior were not verified.
+- WHOIS 3-second timeouts were tested with fakes; real registry timing was not measured.
+- Optional TLS certificate checks were not implemented in this chunk.
+
+### 8. How to explain this to a judge in 30 seconds
+Before our server looks up a pasted address, we check that it does not point back into a private network. Then we collect domain-age, DNS, and existing threat-report clues. If any outside service fails, we say its result is unknown instead of guessing. We also avoid VirusTotal uploads and tell users that Google's lookup API does receive the URL.
+
+### 9. New terms
+- SSRF: a trick that makes a server visit a private address on an attacker's behalf.
+- Netguard: the gate that checks a destination's address before a connection is made.
+- A record: a DNS answer that maps a name to an IPv4 address.
+- AAAA record: a DNS answer that maps a name to an IPv6 address.
+- MX record: a DNS entry that names the server receiving email for a domain.
+- NS record: a DNS entry that names servers responsible for a domain's DNS answers.
+- TTL: time-to-live, the number of seconds a DNS answer may be reused before checking again.
+- RDAP: a modern public service for looking up domain-registration records.
+- WHOIS: an older public service for looking up domain-registration records.
+- IANA: the organization that coordinates shared Internet registries, including RDAP service directions.
+- Threat feed: a service that shares previously recorded reports about harmful links.
+- Redis limiter: a shared counter that prevents a service from being queried more often than its allowed rate.
+- DNS rebinding: a trick where a domain returns a public address during checking and a private address later.
