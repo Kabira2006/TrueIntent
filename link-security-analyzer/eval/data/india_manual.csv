@@ -1,0 +1,41 @@
+row_id,input,label,source,registered_domain,synthetic,scenario
+IN001,upi://collect?pa=merchant01%40oksbi&pn=Bank%20Refund%20Desk&tn=Refund%20processing,malicious,manual,upi,true,collect-refund
+IN002,upi://collect?pa=merchant02%40okaxis&pn=Axis%20Support&tn=Urgent%20refund,malicious,manual,upi,true,collect-refund
+IN003,upi://collect?pa=merchant03%40paytm&pn=Govt%20Refund%20Cell&tn=Claim%20refund,malicious,manual,upi,true,collect-refund
+IN004,upi://mandate?pa=merchant04%40ybl&pn=Police%20Support&tn=Refund%20now,malicious,manual,upi,true,collect-refund
+IN005,upi://collect?pa=merchant05%40ibl&pn=Bank%20KYC%20Desk&tn=Urgent%20verify,malicious,manual,upi,true,collect-kyc
+IN006,upi://pay?pa=shop06%40oksbi&pn=Demo%20Shop&am=15000&tr=ORDER06&cu=INR,malicious,manual,upi,true,prefilled-high-amount
+IN007,upi://pay?pa=shop07%40okaxis&pn=Demo%20Shop&am=25000&tr=ORDER07&cu=INR,malicious,manual,upi,true,prefilled-high-amount
+IN008,upi://pay?pa=shop08%40ybl&pn=Demo%20Shop&am=10000&tr=ORDER08&cu=INR,malicious,manual,upi,true,prefilled-high-amount
+IN009,upi://pay?pa=shop09%40paytm&pn=Demo%20Shop&am=50000&tr=ORDER09&cu=INR,malicious,manual,upi,true,prefilled-high-amount
+IN010,upi://pay?pa=merchant10%40oksbi&pn=State%20Bank%20Help&tr=ORDER10&cu=INR,malicious,manual,upi,true,brand-name-mismatch
+IN011,upi://pay?pa=merchant11%40okicici&pn=ICICI%20Bank%20Support&tr=ORDER11&cu=INR,malicious,manual,upi,true,brand-name-mismatch
+IN012,upi://pay?pa=merchant12%40axl&pn=Axis%20Bank%20Refund&tr=ORDER12&cu=INR,malicious,manual,upi,true,brand-name-mismatch
+IN013,upi://pay?pa=merchant13%40ibl&pn=Police%20Support%20Desk&tr=ORDER13&cu=INR,malicious,manual,upi,true,brand-name-mismatch
+IN014,upi://pay?pa=helpdesk14%40newpsp&pn=Support%20Centre&tn=Urgent%20KYC%20verify&tr=ORDER14&cu=INR,malicious,manual,upi,true,kyc-note
+IN015,upi://pay?pa=helpdesk15%40newpsp&pn=Service%20Desk&tn=KYC%20blocked%20verify&tr=ORDER15&cu=INR,malicious,manual,upi,true,kyc-note
+IN016,upi://pay?pa=helpdesk16%40newpsp&pn=Refund%20Desk&tn=Urgent%20refund%20claim&tr=ORDER16&cu=INR,malicious,manual,upi,true,kyc-note
+IN017,upi://pay?pa=helpdesk17%40newpsp&pn=Account%20Support&tn=Verify%20KYC%20today&tr=ORDER17&cu=INR,malicious,manual,upi,true,kyc-note
+IN018,https://short.example/claim-018,malicious,manual,example,true,synthetic-short-link-lure
+IN019,https://short.example/refund-019,malicious,manual,example,true,synthetic-short-link-lure
+IN020,https://short.example/kyc-020,malicious,manual,example,true,synthetic-short-link-lure
+IN021,upi://pay?pa=demo21%40oksbi&pn=Demo%20Store&tr=ORDER21&cu=INR,benign,manual,upi,true,ordinary-pay
+IN022,upi://pay?pa=demo22%40okhdfcbank&pn=Demo%20Store&tr=ORDER22&cu=INR,benign,manual,upi,true,ordinary-pay
+IN023,upi://pay?pa=demo23%40okicici&pn=Demo%20Store&tr=ORDER23&cu=INR,benign,manual,upi,true,ordinary-pay
+IN024,upi://pay?pa=demo24%40okaxis&pn=Demo%20Store&tr=ORDER24&cu=INR,benign,manual,upi,true,ordinary-pay
+IN025,upi://pay?pa=demo25%40ybl&pn=Demo%20Store&tr=ORDER25&cu=INR,benign,manual,upi,true,ordinary-pay
+IN026,upi://pay?pa=demo26%40ibl&pn=Demo%20Store&tr=ORDER26&cu=INR,benign,manual,upi,true,ordinary-pay
+IN027,upi://pay?pa=demo27%40oksbi&pn=Demo%20Store&am=10&tr=ORDER27&cu=INR,benign,manual,upi,true,low-amount
+IN028,upi://pay?pa=demo28%40okaxis&pn=Demo%20Store&am=50&tr=ORDER28&cu=INR,benign,manual,upi,true,low-amount
+IN029,upi://pay?pa=demo29%40paytm&pn=Demo%20Store&am=100&tr=ORDER29&cu=INR,benign,manual,upi,true,low-amount
+IN030,upi://pay?pa=demo30%40ybl&pn=Demo%20Store&am=500&tr=ORDER30&cu=INR,benign,manual,upi,true,low-amount
+IN031,QR from shop: upi://pay?pa=demo31%40oksbi&pn=Demo%20Store&tr=ORDER31&cu=INR,benign,manual,upi,true,qr-ordinary-pay
+IN032,Scan to pay: upi://pay?pa=demo32%40okhdfcbank&pn=Demo%20Store&tr=ORDER32&cu=INR,benign,manual,upi,true,qr-ordinary-pay
+IN033,Invoice link: upi://pay?pa=demo33%40okicici&pn=Demo%20Store&tr=ORDER33&cu=INR,benign,manual,upi,true,qr-ordinary-pay
+IN034,upi://pay?pa=demo34%40okaxis&pn=Demo%20Store&tr=ORDER34&cu=INR,benign,manual,upi,true,ordinary-pay
+IN035,upi://pay?pa=demo35%40apl&pn=Demo%20Store&tr=ORDER35&cu=INR,benign,manual,upi,true,ordinary-pay
+IN036,upi://pay?pa=demo36%40upi&pn=Demo%20Store&tr=ORDER36&cu=INR,benign,manual,upi,true,ordinary-pay
+IN037,https://shop.example/item/037,benign,manual,example,true,ordinary-web-link
+IN038,https://news.example/story/038,benign,manual,example,true,ordinary-web-link
+IN039,https://travel.example/booking/039,benign,manual,example,true,ordinary-web-link
+IN040,https://market.example/product/040,benign,manual,example,true,ordinary-web-link

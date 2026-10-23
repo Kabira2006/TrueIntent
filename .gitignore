@@ -53,6 +53,10 @@ Thumbs.db
 
 # Eval raw data (git-ignored per Git Protocol; small locked test CSV may be committed)
 link-security-analyzer/eval/data/raw/
+link-security-analyzer/eval/data/train.csv
+link-security-analyzer/eval/data/dev.csv
+link-security-analyzer/eval/data/test_locked.csv
+link-security-analyzer/eval/results/
 
 # Model files (never commit downloaded models)
 *.pt

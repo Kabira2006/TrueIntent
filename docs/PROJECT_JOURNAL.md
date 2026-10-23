@@ -14,7 +14,9 @@ If you do not code, start here. Read the "In one minute" section of the latest c
 - [Chapter 5: Putting the checks together (report, score and API)](#chapter-5-putting-the-checks-together-report-score-and-api)
 - [Chapter 6: The background browser sandbox](#chapter-6-the-background-browser-sandbox)
 - [Chapter 7: Spotting look-alike pages (visual brand check)](#chapter-7-spotting-look-alike-pages-visual-brand-check)
-- Chapters 2 and 8 to 9: to be appended, one per chunk.
+- [Chapter 9: Does it actually work? (evaluation)](#chapter-9-does-it-actually-work-evaluation)
+- [Chapter 10: Whole-system recap and demo guide](#chapter-10-whole-system-recap-and-demo-guide)
+- Chapters 2 and 8: not yet appended.
 
 ## Chapter 0: The big picture and setup
 Date: 2026-10-16 | Commit message: chunk-0: repo rules, skeleton and journal
@@ -841,3 +843,226 @@ We take a temporary picture of a page and reduce it to a short fingerprint. We c
 - Hamming distance: the number of bit positions where two fingerprints differ.
 - Registered domain: the main domain name registered by an owner, such as `example.com`.
 - A/B test: a website experiment that shows different page designs to different visitors.
+
+## Chapter 9: Does it actually work? (evaluation)
+Date: 2026-10-24 | Commit message: chunk-9: evaluation, documentation and final recap
+### 1. In one minute
+We added tools to build repeatable URL datasets and calculate indicator hit rates, score metrics, review lists, and a precision-recall picture. We also added a 40-row Indian-context exercise set whose labels are all explicitly synthetic. The offline exercise ran, but a real source-backed test split could not be built in this environment, so its results are not presented as real-world performance.
+
+### 2. Why we did this
+A detector that only catches examples it has seen may look impressive in a demo but fail on new domains. If the same domain appears in both practice and test data, the test is partly memorized and the score is too optimistic. Evaluation helps show what the current clues catch and what they miss. It also makes false alarms visible: incorrectly warning about legitimate payment links can waste attention and teach people to ignore future warnings.
+
+Precision answers: "Of the things we flagged, how many really belonged to the risky group?" Recall answers: "Of all the risky examples, how many did we find?" False-positive rate answers: "Of the legitimate examples, how many did we incorrectly flag?" For a made-up parcel check, suppose 20 of 100 parcels contain broken glass. The checker flags 20 parcels; 15 really contain glass and 5 do not. Precision is 15/20, or 75%; recall is 15/20, also 75%; the false-positive rate is 5/80, or 6.25%. Those numbers are an everyday illustration, not TrueIntent results. A checker that cries wolf is also failing: people may lose time or stop trusting useful warnings.
+
+### 3. How it works
+```mermaid
+flowchart TD
+  A["Permitted source snapshots"] --> B["Normalize and deduplicate links"]
+  B --> C["Find each registered domain"]
+  C --> D["Keep every domain in one seeded split"]
+  D --> E["Run offline checks or rate-limited online checks"]
+  E --> F["Measure each indicator on both labels"]
+  E --> G["Measure score thresholds and save review lists"]
+```
+Caption: The split happens after domains are identified, so links from one registered domain cannot leak between training and testing.
+
+The data builder groups all links by registered domain before splitting. Imagine a practice exam where several questions all come from one shop. If some of those shop links went into practice and others into the test, the program could learn that shop's name and then appear to generalize. Keeping the whole domain in one group makes that particular shortcut harder. A fixed random seed and the saved Tranco list ID make the split repeatable.
+
+The offline mode uses only local parsers and the UPI analyzer. The online mode calls the existing fast-path service for DNS/registration and prior threat reports. It limits the overall rate to at most four scans a minute, can resume from a local progress file, and does not submit URLs for new VirusTotal scans. Both modes write per-indicator hit rates, score metrics at six thresholds, a precision-recall PNG, and local CSV files for up to 25 false alarms and 25 missed examples.
+
+### 4. Decisions and reasoning
+| decision | options considered | why we chose this | trade-off |
+|---|---|---|---|
+| Split by registered domain | Randomly split rows or keep related domains together | Related links from one site must not appear in both train and test. | A few very large domains can make split sizes uneven. |
+| Keep source-derived files local | Commit a convenient snapshot or respect the source terms | Some feeds forbid redistribution or restrict use; generated splits and raw files are ignored by Git. | Reviewers need eligible credentials and a local build to reproduce them. |
+| Require explicit OpenPhish terms acknowledgment | Download automatically or require an opt-in | The community feed's terms limit use and prohibit redistribution without permission. | A build without acknowledgment has no OpenPhish rows. |
+| Report synthetic metrics separately | Blend hand-built examples with real feeds or label them separately | Hand-built cases are useful for parser checks, not representative population estimates. | They cannot answer how the system performs in the wild. |
+| Keep the locked split out of tuning | Repeatedly adjust thresholds against the test set or reserve it | Reusing test examples to pick thresholds makes the reported score misleading. | Threshold development needs separate train/dev data. |
+
+### 5. What we built
+- `link-security-analyzer/eval/build_dataset.py`: source-aware downloads, terms notes, URL deduplication, Tranco rank sampling, and fixed-seed registered-domain splits.
+- `link-security-analyzer/eval/run_eval.py`: offline and rate-limited online runners, resumable online progress, per-indicator rates, threshold metrics, review CSVs, and a precision-recall PNG.
+- `link-security-analyzer/eval/data/india_manual.csv`: 40 synthetic rows, split evenly between constructed malicious and benign scenarios.
+- `link-security-analyzer/backend/tests/test_evaluation.py`: mocked source builder, split-leakage, metrics, output, resume, and offline UPI tests.
+- `.gitignore`: excludes downloaded feed data, generated splits, and evaluation outputs from commits.
+- `link-security-analyzer/README.md`: data source terms, evaluation commands, architecture, indicator descriptions, privacy, integration, and limits.
+- `README.md`: API quick start and project-journal link.
+- `docs/PROJECT_JOURNAL.md`: this evaluation report and the whole-system recap.
+
+### 6. What actually happened
+The source terms were checked on the sources' official pages. OpenPhish's terms permit only qualifying personal or academic research and prohibit commercial use and redistribution without written permission. The builder therefore requires an explicit research-terms acknowledgment and keeps all resulting rows local. URLhaus requires authentication for its community API, limits free use to qualifying non-profit purposes, and prohibits using its data to train an AI model without prior written consent. The optional PhishTank feed needs an API key; its current terms point to Cisco's end-user agreement, so users must review that agreement before use. Tranco's API provides dated, reproducible lists; the official pages checked did not state a separate data license, so the list ID is recorded and attribution retained.
+
+The Tranco list returned list ID `56Z8N`. Its response was plain CSV rather than a ZIP archive, which exposed an initial parser assumption; the parser was corrected to accept either format. It contained **99,000 entries in ranks 1,001 through 100,000**, and the rank filter was checked. No URLhaus or PhishTank keys were configured, and OpenPhish was skipped because its terms were not acknowledged. The final source-builder run correctly stopped with "No malicious examples were obtained" and wrote no empty or synthetic `test_locked.csv`. Consequently, no source-backed locked split or source-backed online metrics exist yet.
+
+The offline run measured the manually constructed set: **40 rows, 20 malicious-label scenarios and 20 benign-label scenarios, all `synthetic=true`**. Seven web-link rows had unavailable checks because the URL lexical analyzer is absent and offline mode does not query infrastructure or threat feeds. This is a parser/rule sanity check, not a realistic performance estimate.
+
+Per-indicator results on that synthetic set:
+
+| Indicator code | Malicious hit rate | Benign hit rate |
+|---|---:|---:|
+| `DOMAIN_VERY_NEW` | 0/20 (0%) | 0/20 (0%) |
+| `FAST_FLUX_LIKE` | 0/20 (0%) | 0/20 (0%) |
+| `FORM_POSTS_OVER_HTTP` | 0/20 (0%) | 0/20 (0%) |
+| `FORM_POSTS_TO_DIFFERENT_DOMAIN` | 0/20 (0%) | 0/20 (0%) |
+| `GSB_MATCH` | 0/20 (0%) | 0/20 (0%) |
+| `HIDDEN_IFRAME` | 0/20 (0%) | 0/20 (0%) |
+| `INVALID_VPA_FORMAT` | 0/20 (0%) | 0/20 (0%) |
+| `MALFORMED_UPI_URI` | 0/20 (0%) | 0/20 (0%) |
+| `META_REFRESH_REDIRECT` | 0/20 (0%) | 0/20 (0%) |
+| `MISSING_TRANSACTION_REF` | 5/20 (25%) | 0/20 (0%) |
+| `NEW_DOMAIN_LOGIN_FORM` | 0/20 (0%) | 0/20 (0%) |
+| `NON_INR_CURRENCY` | 0/20 (0%) | 0/20 (0%) |
+| `NO_A_RECORD` | 0/20 (0%) | 0/20 (0%) |
+| `NO_MX_RECORD` | 0/20 (0%) | 0/20 (0%) |
+| `PASSWORD_FIELD_PRESENT` | 0/20 (0%) | 0/20 (0%) |
+| `PAYEE_NAME_BRAND_MISMATCH` | 10/20 (50%) | 0/20 (0%) |
+| `PREFILLED_AMOUNT` | 4/20 (20%) | 4/20 (20%) |
+| `REDIRECT_CHAIN_LONG` | 0/20 (0%) | 0/20 (0%) |
+| `REDIRECT_CROSS_DOMAIN` | 0/20 (0%) | 0/20 (0%) |
+| `REDIRECT_TO_SHORTENER` | 0/20 (0%) | 0/20 (0%) |
+| `REGISTRAR_PRIVACY_PROXY` | 0/20 (0%) | 0/20 (0%) |
+| `SANDBOX_BLOCKED_REQUEST` | 0/20 (0%) | 0/20 (0%) |
+| `SANDBOX_BYTE_LIMIT_REACHED` | 0/20 (0%) | 0/20 (0%) |
+| `SENSITIVE_FIELD_REQUESTED` | 0/20 (0%) | 0/20 (0%) |
+| `SUSPICIOUS_NOTE_TEXT` | 9/20 (45%) | 0/20 (0%) |
+| `UNKNOWN_PSP_HANDLE` | 4/20 (20%) | 0/20 (0%) |
+| `UPI_COLLECT_REQUEST` | 5/20 (25%) | 0/20 (0%) |
+| `UPI_EMBEDDED_IN_WEB_URL` | 0/20 (0%) | 0/20 (0%) |
+| `VISUAL_BRAND_IMPERSONATION` | 0/20 (0%) | 0/20 (0%) |
+| `VISUAL_SIMILARITY_WEAK` | 0/20 (0%) | 0/20 (0%) |
+| `VT_MALICIOUS_VENDORS` | 0/20 (0%) | 0/20 (0%) |
+
+Score threshold results on the same 40 synthetic rows:
+
+| Threshold | Precision | Recall | F1 | False-positive rate |
+|---:|---:|---:|---:|---:|
+| 0.05 | 0.800 | 0.800 | 0.800 | 0.200 |
+| 0.10 | 1.000 | 0.800 | 0.889 | 0.000 |
+| 0.20 | 1.000 | 0.650 | 0.788 | 0.000 |
+| 0.30 | 1.000 | 0.600 | 0.750 | 0.000 |
+| 0.50 | 0.000 | 0.000 | 0.000 | 0.000 |
+| 0.75 | 0.000 | 0.000 | 0.000 | 0.000 |
+
+On these constructed cases, payee-name mismatch and suspicious-note signals covered many labeled examples without benign hits; collect and unknown-handle signals covered fewer. `PREFILLED_AMOUNT` did not separate the labels: it appeared in 20% of both groups. At threshold 0.05 the four worst false alarms were benign small-amount links (`IN027`–`IN030`); they show why treating every prefilled amount as decisive would cry wolf. At threshold 0.10 and above there were no false alarms in this small set, but recall fell as the threshold rose. At 0.05, the missed cases were `IN011` and three synthetic short-link URLs (`IN018`–`IN020`). `IN011` was missed because the current name comparison sees "icici" in the configured `okicici` handle and does not notice that the local part is unrelated. The three short-link examples were unavailable to the missing URL lexical analyzer, so they received no detecting URL signal. These are examples from constructed cases, not confirmed real-world failures.
+
+The complete backend test run and the separately marked browser test reported:
+
+```text
+$ python -m pytest -q
+........................................................................ [ 42%]
+........................................................................ [ 84%]
+...........................                                              [100%]
+171 passed, 1 deselected in 11.48s
+
+$ python -m pytest -q -m integration
+.                                                                        [100%]
+1 passed, 171 deselected in 11.34s
+```
+
+Ruff reported `All checks passed!`; the changed evaluation scripts and test file passed `ruff format --check`. A broader format-only check also identified pre-existing formatting in `backend/app/core/threat_feeds.py` and `backend/app/db/models.py`; they were not changed because they are outside this chunk. The evaluation tests use mocked feeds; no OpenPhish, URLhaus, or PhishTank malicious URLs were downloaded. The precision-recall image and CSV reports are local under `eval/results/` and git-ignored.
+
+### 7. Limits and honest weaknesses
+1. There is no URL lexical analyzer in this checkout, so website spelling clues are unavailable. We also could not make a permitted source-backed malicious test set, so there is no honest real-world URL precision or recall yet.
+2. The 40-row Indian set is hand-constructed from the same rules being checked. Its strong-looking values cannot be generalized. Its labels encode expected patterns, not independent expert judgments.
+3. The fixed score is uncalibrated and the rules have gaps: small legitimate amounts trigger the amount indicator, brand-name matching can miss an unrelated VPA local part, and higher score thresholds missed more synthetic positives. Visual and online-only indicators had no offline examples.
+
+### 8. How to explain this to a judge in 30 seconds
+We built a repeatable evaluator that keeps each domain entirely in one data split and reports both catches and false alarms. We ran it on 40 clearly marked synthetic Indian examples and published the actual counts. Those results test that the plumbing works, not how well the system handles real scams. We did not invent a real-world score when the licensed feed access and URL lexical code were unavailable.
+
+### 9. New terms
+- Precision: the share of flagged examples that truly belong to the positive label.
+- Recall: the share of positive examples the checker finds.
+- False-positive rate: the share of negative examples incorrectly flagged.
+- Data leakage: information from the test set accidentally influencing training or threshold choices.
+- Locked test split: examples reserved for final measurement, not for tuning.
+- Synthetic: deliberately constructed sample data that does not represent observed users or real incidents.
+- Precision-recall curve: a graph showing how precision and recall change as the score threshold changes.
+
+## Chapter 10: Whole-system recap and demo guide
+Date: 2026-10-24 | Commit message: chunk-9: evaluation, documentation and final recap
+### 1. In one minute
+TrueIntent accepts a URL, UPI link, or pasted QR text and organizes observed clues into technical, visual, and transaction-context pillars. Quick checks return first; a background browser can add page behavior and a visual fingerprint later. The system uses cautious wording and keeps screenshots out of storage. This is still a staged prototype: the URL lexical analyzer and the Next.js interface are not implemented in this checkout.
+
+### 2. Why we did this
+A single clue list is easier for a person and later software to understand than a hidden yes/no verdict. Separating the quick response from the slower browser visit keeps the API responsive. The safeguards, availability states, and explicit limitations matter because a hostile link can target the system itself, and a false sense of certainty can harm the person using it.
+
+### 3. How it works
+```mermaid
+flowchart TD
+  U["Person prepares a link or QR text"] --> A["Scan API receives the input"]
+  A --> C["Classify and normalize input"]
+  C --> F["Run bounded fast checks"]
+  F --> R["Assemble three advisory pillars"]
+  F --> D["Save scan record and cache result"]
+  C -->|Web URL| Q["Queue scan ID for browser work"]
+  Q --> W["Background worker starts a fresh browser"]
+  W --> N["Netguard checks each browser request"]
+  N --> B["Audit page and keep only a visual hash"]
+  B --> D
+  U --> P["Person polls with the scan ID"]
+  D --> P
+  P --> O["Read available indicators and status"]
+```
+Caption: The quick report and the later browser findings share one saved job; the browser's network requests pass through netguard.
+
+### 4. Decisions and reasoning
+| decision | options considered | why we chose this | trade-off |
+|---|---|---|---|
+| Report indicators, not verdicts | One definitive label or separate clues | A clue does not prove intent, and missing checks must remain visible. | The user must use judgment and official contact channels. |
+| Return a fast result and continue browser work in the background | Wait for every check or return an early report | Browser loading can be slow and needs separate resource limits. | A first report can have pending or unavailable pillars. |
+| Keep the score internal | Display it as a probability or omit it from the user response | Its weights have not been statistically calibrated. | Later fusion work must retain this caveat. |
+| Demo through the API for now | Pretend a user interface is complete or show the working API boundary | The frontend task is not implemented; the API is the available interface. | This is not yet a polished judge-facing web demonstration. |
+| Give only verified contact references | Guess a helpline number or leave it out | An incorrect emergency contact can delay help. | This chapter does not supply a national helpline reference. |
+
+### 5. What we built
+- `README.md`: repository-level API quick start and journal link.
+- `link-security-analyzer/README.md`: architecture, indicator dictionary, privacy flow, source terms, run/test/evaluation instructions, library contract, and limitations.
+- `docs/PROJECT_JOURNAL.md`: final recap, API demo guide, and likely judge questions.
+
+### 6. What actually happened
+The backend suite passed **171 tests**, with the one browser integration test deselected in the standard run and passing when run separately. The local browser test uses an explicitly enabled test-only loopback argument; production paths do not enable it. Ruff lint passed; changed evaluation files passed formatting checks.
+
+The demo commands below were documented but not run against a live Docker deployment in this chunk. Docker runtime availability was not verified here. The frontend Compose service remains a placeholder; there is no interactive page to screenshot, so no UI screenshots were captured. API behavior is covered by mocked tests, but a full live-stack demo should be verified on a machine with Docker and the required services.
+
+### 7. Limits and honest weaknesses
+- The Next.js frontend has not been built. The Compose frontend entry still sleeps instead of serving a page.
+- The URL lexical analyzer is absent. URL spelling results are therefore unavailable, as confirmed by the evaluation.
+- No source-backed locked dataset was generated; external feed evaluation and real-world accuracy remain unverified.
+- A heuristic score is uncalibrated and is not a probability.
+- The browser uses netguard per request, but DNS rebinding between validation and connection remains possible. The browser worker shares a Docker network with Redis and PostgreSQL; production needs egress firewalling and stronger network isolation.
+- Perceptual hashes are fragile under cookie banners, A/B tests, screen-size changes, language variants, and dynamic content.
+- The offline synthetic evaluation found the expected policy tension: at 0.05 the false-positive rate was 20%, while a higher threshold reduced false alarms but missed more labeled examples.
+
+### 8. How to explain this to a judge in 30 seconds
+Paste a link into the API, receive a scan ID and quick clues, then poll that ID for the saved report. The report separates address and infrastructure clues, page-appearance clues, and UPI transaction details. A guarded background browser can add page observations. We do not call a link safe or fraudulent, do not keep screenshots, and do not present our rule score as a probability. The evaluator is currently limited to synthetic results until permitted external data and the missing URL analyzer are available.
+
+#### Demo script (API only)
+1. From `link-security-analyzer/`, copy `.env.example` to `.env` and start PostgreSQL, Redis, the API, and the worker with `docker compose up --build postgres redis backend worker`. Fill in any optional provider credentials only in the private `.env` file.
+2. Open `http://localhost:8000/docs`, or paste this harmless placeholder in the request body: `{"input":"https://example.com"}`.
+3. Send `POST http://localhost:8000/api/v1/scan`. Show the returned `scan_id`, `status`, summary, and `poll_url`.
+4. Poll the returned URL about every 1.5 seconds. Show the technical, visual, and transaction-context cards as pillars in the API report; depending on which checks ran, their statuses may be pending, unavailable, not applicable, or contain indicators.
+5. Explain: "These are automated indicators, not a verdict. A missing check is not a clean result. Please contact an organization through its official number before paying or logging in."
+
+The Next.js screen and its requested visual screenshot are **not implemented / not captured**. If a local API or worker is unavailable, do not present an unverified response as a live result.
+
+#### Likely judge questions
+1. **Why not just use Google Safe Browsing?** It is one useful source, and the system can look up its existing reports when configured. It does not provide the UPI-field, DNS/registration, browser-form, or visual-layout clues, and a missing listing is not proof that a page is harmless.
+2. **What about false alarms?** They are a real failure mode. We show indicators rather than final labels, measure false-positive rates, and found four benign low-amount examples flagged at the synthetic 0.05 threshold. Those results are not enough to calibrate production thresholds.
+3. **How do you stop your server being attacked by hostile links?** Netguard checks the initial destination and each browser request, blocks private/special address types, and the worker uses a fresh bounded browser context. DNS can still change between check and connection, and the shared Docker network needs production firewalling.
+4. **What is the score, and can I trust it?** It is a fixed-weight internal heuristic. It is explicitly uncalibrated, is not a probability, and should not be displayed as a percentage.
+5. **What is a UPI collect request?** It asks the recipient to pay, unlike a normal pay link that initiates a payment from the payer. It is often disguised as a refund; a person never needs a PIN to receive money.
+6. **Do you store page screenshots?** No. The screenshot exists in memory long enough to compute a perceptual hash, then is discarded. The hash and selected page features are stored.
+7. **Does no indicators detected mean there is no risk?** No. It means these checks did not report a clue. A check may be unavailable, and new or unobserved behavior may not be covered.
+8. **What data leaves the service?** The input is stored in the scan record. When enabled, Safe Browsing and VirusTotal receive lookup requests containing the submitted address. VirusTotal is queried for an existing report; this code does not ask it to scan or upload the URL.
+9. **Why split test data by domain?** Links from the same site often share structure. If that site's examples appeared in both practice and test, the test score could reward memorization rather than useful generalization.
+10. **Are these accuracy numbers real?** The reported metrics are from 40 synthetic examples made for parser and rule checks. A real source-backed test split was not produced, so no real-world accuracy claim is justified.
+11. **Why is the visual check weak?** Cookie banners, layout experiments, localization, dynamic content, and different screen sizes can change a page image. A similar hash is supporting evidence, not proof.
+12. **What would you do next?** Implement and test URL lexical analysis; obtain and follow suitable data permissions; evaluate a larger domain-separated set; calibrate or train a model on permitted `signal_vector` examples; finish the Next.js screen; and combine Module A with the separate text-scam engine.
+
+### 9. New terms
+- FastAPI: the web framework that receives scan requests and returns report data.
+- Redis: a shared in-memory store used here for caching and queued task messages.
+- Celery: the background job runner that performs slower browser work.
+- Netguard: the server-side destination checker that blocks private or special network addresses.
+- Signal vector: a flat collection of numeric and boolean facts for later analysis.
+- Egress firewall: a network rule that controls where a service is allowed to connect.
