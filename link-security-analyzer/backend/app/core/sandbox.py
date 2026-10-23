@@ -9,6 +9,7 @@ from typing import Any, Literal
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import imagehash
+import tldextract
 from bs4 import BeautifulSoup
 from PIL import Image
 from playwright.async_api import (
@@ -60,6 +61,7 @@ _SENSITIVE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("aadhaar", re.compile(r"\b(?:aadhaar|aadhar)\b", re.IGNORECASE)),
 )
 _NAVIGATION_STATUSES = {301, 302, 303, 307, 308}
+_SUFFIX_EXTRACTOR = tldextract.TLDExtract(suffix_list_urls=())
 
 
 class SandboxResult(BaseModel):
@@ -70,6 +72,86 @@ class SandboxResult(BaseModel):
     status: Literal["NO_INDICATORS", "FLAGGED", "UNAVAILABLE"]
     indicators: list[Indicator]
     features: dict[str, str | int | float | bool]
+
+
+def hamming_distance(left_hash: str, right_hash: str) -> int:
+    """Return the differing-bit count for two hexadecimal 64-bit hashes."""
+    if not re.fullmatch(r"[0-9a-fA-F]{1,16}", left_hash) or not re.fullmatch(
+        r"[0-9a-fA-F]{1,16}", right_hash
+    ):
+        raise ValueError("Perceptual hashes must be hexadecimal values up to 64 bits.")
+    return (int(left_hash, 16) ^ int(right_hash, 16)).bit_count()
+
+
+def match_brand_references(
+    page_hash: str | None,
+    page_host: str | None,
+    references: list[Any],
+    *,
+    threshold: int,
+) -> list[Indicator]:
+    """Compare a page hash to official references, excluding official domains."""
+    if not page_hash or not page_host:
+        return []
+    if not 0 <= threshold <= 64:
+        raise ValueError("The perceptual-hash threshold must be between 0 and 64.")
+
+    page_domain = _registered_domain(page_host)
+    if not page_domain:
+        return []
+    distances: dict[tuple[str, str], int] = {}
+    for reference in references:
+        brand = str(_reference_value(reference, "brand_name", "")).strip()
+        official = str(_reference_value(reference, "official_domain", "")).strip()
+        reference_hash = _reference_value(reference, "phash_signature")
+        if not brand or not official or not isinstance(reference_hash, str):
+            continue
+        official_domain = _registered_domain(official)
+        if not official_domain or page_domain == official_domain:
+            continue
+        try:
+            distance = hamming_distance(page_hash, reference_hash)
+        except ValueError:
+            logger.warning("ignored invalid perceptual hash for brand=%s", brand)
+            continue
+        key = (brand, official_domain)
+        distances[key] = min(distance, distances.get(key, 65))
+
+    indicators: list[Indicator] = []
+    for (brand, _official_domain), distance in sorted(distances.items()):
+        if distance <= threshold:
+            indicators.append(
+                _indicator(
+                    "VISUAL_BRAND_IMPERSONATION",
+                    "high",
+                    f"The page layout resembles the {brand} reference, but the domain is not the brand's official domain.",
+                    {"brand": brand, "distance": distance, "threshold": threshold},
+                )
+            )
+        elif distance <= threshold + 4:
+            indicators.append(
+                _indicator(
+                    "VISUAL_SIMILARITY_WEAK",
+                    "low",
+                    f"The page layout resembles the {brand} reference, but the domain is not the brand's official domain.",
+                    {"brand": brand, "distance": distance, "threshold": threshold},
+                )
+            )
+    return indicators
+
+
+def _reference_value(reference: Any, key: str, default: Any = None) -> Any:
+    if isinstance(reference, dict):
+        return reference.get(key, default)
+    return getattr(reference, key, default)
+
+
+def _registered_domain(value: str) -> str | None:
+    host = _hostname(value if "://" in value else f"https://{value}")
+    if not host:
+        return None
+    extracted = _SUFFIX_EXTRACTOR(host)
+    return extracted.top_domain_under_public_suffix or host
 
 
 class RequestGuard:
@@ -97,24 +179,28 @@ class RequestGuard:
                 await assert_public_target(url, settings=self.settings)
         except BlockedTargetError as error:
             self._blocked(url, error.reason_code)
-            await route.abort("blockedbyclient")
+            await _abort_route(route)
             return
 
         if parsed.scheme.lower() not in {"http", "https"}:
             self._blocked(url, "UNSUPPORTED_SCHEME")
-            await route.abort("blockedbyclient")
+            await _abort_route(route)
             return
         if request.is_navigation_request():
             self.navigation_count += 1
             if self.navigation_count > self.max_navigations:
                 self._blocked(url, "NAVIGATION_LIMIT")
-                await route.abort("blockedbyclient")
+                await _abort_route(route)
                 return
         if request.resource_type == "media":
             self._blocked(url, "DISALLOWED_RESOURCE_TYPE")
-            await route.abort("blockedbyclient")
+            await _abort_route(route)
             return
-        await route.continue_()
+        try:
+            await route.continue_()
+        except PlaywrightError as error:
+            if "closed" not in str(error).lower():
+                raise
 
     async def handle_websocket(self, route: WebSocketRoute) -> None:
         url = route.url
@@ -131,7 +217,11 @@ class RequestGuard:
         else:
             reason = "UNSUPPORTED_SCHEME"
         self._blocked(url, reason)
-        await route.close(code=1008, reason="WebSocket connections are disabled.")
+        try:
+            await route.close(code=1008, reason="WebSocket connections are disabled.")
+        except PlaywrightError as error:
+            if "closed" not in str(error).lower():
+                raise
 
     def _is_explicit_test_target(self, parsed: Any) -> bool:
         if self.test_origin is None:
@@ -309,6 +399,7 @@ async def _scan_page_in_browser(
     finally:
         if context is not None:
             try:
+                await context.unroute_all(behavior="wait")
                 await context.close()
             except PlaywrightError as error:
                 logger.info("sandbox context close failed (%s)", type(error).__name__)
@@ -513,11 +604,22 @@ async def _dismiss_dialog(dialog: Any) -> None:
         logger.info("sandbox dialog dismissal failed (%s)", type(error).__name__)
 
 
+async def _abort_route(route: Route) -> None:
+    try:
+        await route.abort("blockedbyclient")
+    except PlaywrightError as error:
+        if "closed" not in str(error).lower():
+            raise
+
+
 async def _cancel_download(download: Any) -> None:
     try:
         await download.cancel()
     except PlaywrightError as error:
-        logger.info("sandbox download cancellation failed (%s)", type(error).__name__)
+        if "closed" not in str(error).lower():
+            logger.info(
+                "sandbox download cancellation failed (%s)", type(error).__name__
+            )
 
 
 async def _close_page(page: Page) -> None:

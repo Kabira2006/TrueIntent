@@ -12,8 +12,12 @@ from billiard.exceptions import SoftTimeLimitExceeded
 from app.config import get_settings
 from app.core.aggregator import AdvisoryPillar, build_report
 from app.core.models import Indicator
-from app.core.sandbox import SandboxResult, scan_page
-from app.db.models import ScanJob
+from app.core.sandbox import (
+    SandboxResult,
+    match_brand_references,
+    scan_page,
+)
+from app.db.models import BrandReference, ScanJob
 from app.db.session import get_sync_session
 from app.workers.celery_app import celery_app
 
@@ -49,6 +53,18 @@ def sandbox_scan(self: Any, scan_id: str) -> dict[str, str]:
             domain_age = _domain_age(job.signal_vector)
             result = asyncio.run(
                 scan_page(job.input_payload, domain_age_days=domain_age)
+            )
+            references = session.query(BrandReference).filter(
+                BrandReference.phash_signature.is_not(None)
+            )
+            matches = match_brand_references(
+                result.features.get("phash"),
+                result.features.get("final_host"),
+                list(references),
+                threshold=get_settings().phash_distance_threshold,
+            )
+            result = result.model_copy(
+                update={"indicators": [*result.indicators, *matches]}
             )
             _store_sandbox_result(job, result)
             if result.status == "UNAVAILABLE":

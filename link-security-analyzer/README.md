@@ -35,3 +35,19 @@ runtime-verified here because Docker Desktop's Linux engine was unavailable.
 Production deployments should additionally isolate the worker from the database
 and cache networks, limit outbound connections at the host or cloud firewall,
 and review the browser image and seccomp profile on every upgrade.
+
+## Brand reference fingerprints
+
+The checked-in seed list is [`backend/data/brand_seed.yaml`](backend/data/brand_seed.yaml).
+From `backend/`, run `python -m scripts.seed_brands --verify-only` to load each
+official page through the guarded browser and print its result without writing
+to the database. Run `python -m scripts.seed_brands` to add successful
+fingerprints, or add `--refresh` to replace a brand's old references only if
+all of that brand's configured pages loaded successfully. A `HUMAN_REVIEW`
+row means the page could not be safely loaded or did not finish on a configured
+official domain; no fingerprint is silently invented.
+
+The visual comparison uses a Hamming-distance threshold of 10 bits out of 64.
+Page layout hashes are fragile: cookie banners, A/B tests, localization,
+responsive layout, and dynamic content can change the image. Treat this pillar
+as supporting evidence, not a stand-alone result.

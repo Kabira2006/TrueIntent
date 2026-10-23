@@ -1,0 +1,61 @@
+brands:
+  - name: SBI
+    official_domains: [onlinesbi.sbi]
+    references:
+      - label: homepage
+        url: https://onlinesbi.sbi/
+  - name: HDFC Bank
+    official_domains: [hdfcbank.com]
+    references:
+      - label: homepage
+        url: https://www.hdfcbank.com/
+  - name: ICICI Bank
+    official_domains: [icicibank.com]
+    references:
+      - label: homepage
+        url: https://www.icicibank.com/
+  - name: Axis Bank
+    official_domains: [axisbank.com]
+    references:
+      - label: homepage
+        url: https://www.axisbank.com/
+  - name: PhonePe
+    official_domains: [phonepe.com]
+    references:
+      - label: homepage
+        url: https://www.phonepe.com/
+  - name: Paytm
+    official_domains: [paytm.com]
+    references:
+      - label: homepage
+        url: https://paytm.com/
+  - name: Flipkart
+    official_domains: [flipkart.com]
+    references:
+      - label: homepage
+        url: https://www.flipkart.com/
+  - name: Amazon India
+    official_domains: [amazon.in]
+    references:
+      - label: homepage
+        url: https://www.amazon.in/
+  - name: IRCTC
+    official_domains: [irctc.co.in]
+    references:
+      - label: homepage
+        url: https://www.irctc.co.in/
+  - name: UIDAI
+    official_domains: [uidai.gov.in]
+    references:
+      - label: homepage
+        url: https://uidai.gov.in/
+  - name: India Post
+    official_domains: [indiapost.gov.in]
+    references:
+      - label: homepage
+        url: https://www.indiapost.gov.in/
+  - name: Income Tax e-filing
+    official_domains: [incometax.gov.in]
+    references:
+      - label: homepage
+        url: https://www.incometax.gov.in/

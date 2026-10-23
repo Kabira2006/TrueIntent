@@ -1,5 +1,7 @@
 """Celery task persistence tests use an in-memory stand-in, not PostgreSQL."""
 
+from __future__ import annotations
+
 import uuid
 from collections.abc import Iterator
 from types import SimpleNamespace
@@ -8,20 +10,37 @@ import pytest
 from billiard.exceptions import SoftTimeLimitExceeded
 
 from app.core.sandbox import SandboxResult
+from app.db.models import BrandReference
 from app.workers import tasks
 from app.workers.celery_app import celery_app
+
+
+class _ReferenceQuery:
+    def __init__(self, references: list[object]) -> None:
+        self.references = references
+
+    def filter(self, *criteria: object) -> _ReferenceQuery:
+        return self
+
+    def __iter__(self):
+        return iter(self.references)
 
 
 class _Session:
     def __init__(self, job: SimpleNamespace) -> None:
         self.job = job
         self.commits = 0
+        self.references: list[object] = []
 
     def get(self, model: type, job_id: uuid.UUID) -> SimpleNamespace | None:
         return self.job if self.job.id == job_id else None
 
     def commit(self) -> None:
         self.commits += 1
+
+    def query(self, model: type) -> _ReferenceQuery:
+        assert model is BrandReference
+        return _ReferenceQuery(self.references)
 
 
 def _job() -> SimpleNamespace:
@@ -67,13 +86,23 @@ def test_successful_sandbox_persists_only_hash_and_keeps_fast_path(
     job = _job()
     fast_path_technical = job.lexical_indicators
     session = _install_session(monkeypatch, job)
+    session.references = [
+        SimpleNamespace(
+            brand_name="Example Bank",
+            official_domain="example.com",
+            phash_signature="0000000000000000",
+        )
+    ]
 
     async def scan_page(url: str, *, domain_age_days: int | None = None):
         assert domain_age_days == 45
         return SandboxResult(
             status="NO_INDICATORS",
             indicators=[],
-            features={"phash": "abcdef0123456789"},
+            features={
+                "phash": "0000000000000000",
+                "final_host": "copycat.test",
+            },
         )
 
     monkeypatch.setattr(tasks, "scan_page", scan_page)
@@ -82,7 +111,10 @@ def test_successful_sandbox_persists_only_hash_and_keeps_fast_path(
     assert result == {"status": "COMPLETED", "scan_id": str(job.id)}
     assert session.commits == 1
     assert job.lexical_indicators == fast_path_technical
-    assert job.sandbox_indicators["features"] == {"phash": "abcdef0123456789"}
+    assert job.sandbox_indicators["features"]["phash"] == "0000000000000000"
+    match = job.sandbox_indicators["indicators"][0]
+    assert match["code"] == "VISUAL_BRAND_IMPERSONATION"
+    assert match["evidence"]["brand"] == "Example Bank"
     assert "image" not in str(job.sandbox_indicators).lower()
     assert job.signal_vector["domain_age_days"] == 45
     assert job.error_message is None

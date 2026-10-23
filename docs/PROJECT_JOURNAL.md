@@ -13,7 +13,8 @@ If you do not code, start here. Read the "In one minute" section of the latest c
 - [Chapter 4: Safe network checks (netguard, domain age, threat feeds)](#chapter-4-safe-network-checks-netguard-domain-age-threat-feeds)
 - [Chapter 5: Putting the checks together (report, score and API)](#chapter-5-putting-the-checks-together-report-score-and-api)
 - [Chapter 6: The background browser sandbox](#chapter-6-the-background-browser-sandbox)
-- Chapters 2 and 7 to 9: to be appended, one per chunk.
+- [Chapter 7: Spotting look-alike pages (visual brand check)](#chapter-7-spotting-look-alike-pages-visual-brand-check)
+- Chapters 2 and 8 to 9: to be appended, one per chunk.
 
 ## Chapter 0: The big picture and setup
 Date: 2026-10-16 | Commit message: chunk-0: repo rules, skeleton and journal
@@ -750,3 +751,93 @@ Some clues appear only after a page opens, so a quick text check cannot find the
 - Seccomp: a Linux filter that limits which system calls a process can make.
 - Perceptual hash: a short visual fingerprint that can help compare images without retaining the image.
 - DNS rebinding: a trick where a domain changes its address after it passes an initial check.
+
+## Chapter 7: Spotting look-alike pages (visual brand check)
+Date: 2026-10-24 | Commit message: chunk-7: brand fingerprints and visual matching
+### 1. In one minute
+We added a supporting check for pages that look like a known brand while using a different web address. The browser takes a screenshot in memory, turns it into a short visual fingerprint, and compares that fingerprint with references for official brands. A close match becomes an indicator, not a verdict. The screenshot itself is discarded.
+
+### 2. Why we did this
+A copycat page can use a bank or shop's colors and layout while its address belongs to someone else. Address spelling checks cannot see a page's appearance. A visual comparison adds one more clue, while the official-domain list helps prevent a real brand page from being flagged as an impersonator.
+
+### 3. How it works
+```mermaid
+flowchart TD
+  A["Guarded browser visits page"] --> B["Capture viewport image in memory"]
+  B --> C["Turn image into 64-bit pHash"]
+  C --> D["Compare with stored official-brand hashes"]
+  D --> E{"Official registered domain?"}
+  E -->|Yes| F["Do not report a brand match"]
+  E -->|No| G{"Distance at most threshold 10?"}
+  G -->|Yes| H["High visual resemblance indicator"]
+  G -->|No| I{"Distance at most 14?"}
+  I -->|Yes| J["Low weak-similarity indicator"]
+  I -->|No| K["No visual indicator"]
+```
+Caption: The page image is reduced to a fingerprint, and only close matches on non-official domains become indicators.
+
+A **perceptual hash** (pHash) is a compact visual fingerprint: it reduces an image to a tiny light-and-dark pattern that can stay similar when the image changes a little. **Hamming distance** counts how many bits differ between two fingerprints. For a small example, `10110010` and `10100011` differ in two places, so their distance is 2. Real comparisons use 64 bits.
+
+The comparison checks each stored brand reference and keeps the closest match for that brand. A distance of 10 or less produces the high `VISUAL_BRAND_IMPERSONATION` indicator. A distance from 11 through 14 produces only the low `VISUAL_SIMILARITY_WEAK` indicator. A smaller threshold catches fewer pages and may miss changed layouts; a larger threshold catches more pages but can create more false alarms. The default of 10 is a practical initial setting, not a scientifically calibrated boundary.
+
+The system compares registered domains, not just page titles or logos. If the page is on the brand's own registered domain or one of its subdomains, it is excluded from impersonation matching. The wording says the layout "resembles" a reference and the domain is not official. It never calls the page fake: a visual resemblance is evidence, not proof of who made the page or why.
+
+```text
+Near:  10110010  vs  10100011  -> distance 2  -> close visual pattern
+Far:   10110010  vs  01001101  -> distance 8  -> more bits differ
+Rule:  64-bit distance <= 10 is high; 11-14 is weak; above 14 is not reported
+```
+
+### 4. Decisions and reasoning
+| decision | options considered | why we chose this | trade-off |
+|---|---|---|---|
+| Compare perceptual hashes | Pixel-for-pixel equality or visual fingerprint distance | Small image changes should not erase every resemblance. | Different pages can still have similar broad layouts. |
+| Use threshold 10 | Very strict or very broad matching | It is a clear initial rule with a separate weak band through 14. | It is not calibrated against a large labeled image set. |
+| Exclude official registered domains | Compare every page or check the domain first | A brand page should not be described as an impersonator of itself. | Domain registration alone does not establish that every page is trustworthy. |
+| Use careful wording | Call a page fake or report resemblance | The hash cannot establish intent or prove fraud. | The message is less dramatic, but more honest. |
+| Keep hashes, discard screenshots | Store page images or store only fingerprints | Fingerprints support comparison without retaining the screenshot. | Reviewers cannot later inspect the original image from this record. |
+
+### 5. What we built
+- `link-security-analyzer/backend/app/core/sandbox.py`: 64-bit Hamming distance, brand-reference matching with official-domain exclusion and high/weak thresholds, and route-handler cleanup during context shutdown.
+- `link-security-analyzer/backend/app/workers/tasks.py`: loads stored references and adds brand indicators to the sandbox result before saving it.
+- `link-security-analyzer/backend/data/brand_seed.yaml`: official homepage references for the 12 requested brands.
+- `link-security-analyzer/backend/scripts/seed_brands.py`: guarded browser verification, database upsert, `--refresh`, and `--verify-only` output.
+- `link-security-analyzer/backend/tests/test_brand_matching.py`: distance, threshold, official-domain, image-fixture, seed-validation, and persistence tests.
+- `link-security-analyzer/backend/tests/test_sandbox_task.py`: task-side brand match and persistence assertions.
+- `link-security-analyzer/backend/requirements.txt`: pinned PyYAML dependency used by the seed file loader.
+- `link-security-analyzer/README.md`: seeding instructions and the warning that pHash is fragile.
+- `docs/PROJECT_JOURNAL.md`: this chapter and the table-of-contents entry.
+
+### 6. What actually happened
+The complete backend suite reported **157 passed, 1 deselected**. Running the explicitly marked browser integration test separately reported **1 passed, 157 deselected**. Ruff lint and formatting checks passed for all five changed Python implementation and test files. The image fixture test compared generated local pictures: the slightly perturbed image had a distance of 4, while the checkerboard comparison had a distance of 31.
+
+The latest `python -m scripts.seed_brands --verify-only` run checked all 12 configured pages and exited with status 1 because 10 needed human review. It did not write to PostgreSQL. Two page loads produced hashes; the other pages timed out, did not finish, or did not yield an accepted final page. Results from that run:
+
+| brand | status | notes |
+|---|---|---|
+| SBI | HUMAN_REVIEW | Browser check timed out. |
+| HDFC Bank | HUMAN_REVIEW | Page did not load or finish on an accepted official host. |
+| ICICI Bank | HUMAN_REVIEW | Browser check timed out. |
+| Axis Bank | HUMAN_REVIEW | Page did not load or finish on an accepted official host. |
+| PhonePe | HUMAN_REVIEW | Page did not load or finish on an accepted official host. |
+| Paytm | HUMAN_REVIEW | Browser check timed out. |
+| Flipkart | LOADED | Hash `fbc43b8942479ec1` was produced. |
+| Amazon India | HUMAN_REVIEW | Browser check timed out. |
+| IRCTC | HUMAN_REVIEW | Page did not load or finish on an accepted official host. |
+| UIDAI | HUMAN_REVIEW | Browser check timed out. |
+| India Post | LOADED | Hash `91caae17936c5a2d` was produced. |
+| Income Tax e-filing | HUMAN_REVIEW | Browser check timed out. |
+
+The run also printed Playwright cancellation and pending-route-task warnings during some timeouts. The wait-for-handlers cleanup did not remove those warnings, so clean teardown on these slow live sites is **not verified**. The `--verify-only` run was deliberately non-persistent; actual database seeding was not performed. The earlier verification attempt loaded a different set of pages, which showed that live-site availability was inconsistent; the table above reports the latest run only.
+
+### 7. Limits and honest weaknesses
+Visual matching is the weakest of the three pillars. Cookie banners, A/B tests (different page variants shown to visitors), language, screen size, and moving page content can all change a screenshot. Two unrelated sites can also share a broad template. A hash can support a review, but cannot establish brand ownership or user intent. Only two of the 12 references loaded in the latest verify-only run, so the remaining brands need a successful recheck or human review before their references can be stored.
+
+### 8. How to explain this to a judge in 30 seconds
+We take a temporary picture of a page and reduce it to a short fingerprint. We compare that fingerprint with pictures from official brand pages. If the layout is close but the web address is outside the brand's official domain, we report that it resembles the brand. The image is discarded, and the result stays a clue because page designs change and similarity is not proof.
+
+### 9. New terms
+- Perceptual hash (pHash): a short pattern that summarizes an image's broad visual appearance.
+- Hamming distance: the number of bit positions where two fingerprints differ.
+- Registered domain: the main domain name registered by an owner, such as `example.com`.
+- A/B test: a website experiment that shows different page designs to different visitors.
