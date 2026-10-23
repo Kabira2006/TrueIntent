@@ -160,6 +160,41 @@ def test_post_scan_persists_fast_result_and_returns_202(
     assert enqueued == [uuid.UUID(body["scan_id"])]
 
 
+def test_enqueue_sandbox_dispatches_celery_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scan_id = uuid.uuid4()
+    queued: list[str] = []
+    monkeypatch.setattr(endpoints.sandbox_scan, "delay", queued.append)
+
+    endpoints.enqueue_sandbox(scan_id)
+
+    assert queued == [str(scan_id)]
+
+
+def test_queue_failure_marks_saved_scan_failed(
+    api_dependencies, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, session, _ = api_dependencies
+    monkeypatch.setattr(
+        endpoints, "run_fast_path", _result_runner(_sample_fast_result())
+    )
+
+    def fail_enqueue(scan_id: uuid.UUID) -> None:
+        raise OSError("queue unavailable")
+
+    monkeypatch.setattr(endpoints, "enqueue_sandbox", fail_enqueue)
+    response = client.post("/api/v1/scan", json={"input": "https://example.com/path"})
+
+    assert response.status_code == 503
+    job = session.added[0]
+    assert job.status == "FAILED"
+    assert job.completed_at is not None
+    assert job.sandbox_indicators["status"] == "UNAVAILABLE"
+    assert job.sandbox_indicators["indicators"][0]["code"] == "SANDBOX_UNAVAILABLE"
+    assert job.final_advisory_status == "INCONCLUSIVE"
+
+
 def test_get_scan_returns_persisted_three_pillar_report(
     api_dependencies, monkeypatch: pytest.MonkeyPatch
 ) -> None:

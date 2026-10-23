@@ -15,8 +15,12 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    database_url: str = Field(default="postgresql+asyncpg://trueintent:trueintent@localhost:5432/trueintent")
-    sync_database_url: str = Field(default="postgresql+psycopg2://trueintent:trueintent@localhost:5432/trueintent")
+    database_url: str = Field(
+        default="postgresql+asyncpg://trueintent:trueintent@localhost:5432/trueintent"
+    )
+    sync_database_url: str = Field(
+        default="postgresql+psycopg2://trueintent:trueintent@localhost:5432/trueintent"
+    )
     redis_url: str = Field(default="redis://localhost:6379/0")
 
     gsb_api_key: str = Field(default="")
@@ -29,6 +33,10 @@ class Settings(BaseSettings):
     fast_path_budget_seconds: float = Field(default=5.0)
     sandbox_enabled: bool = Field(default=True)
     sandbox_page_timeout_seconds: int = Field(default=15)
+    sandbox_task_soft_time_limit_seconds: int = Field(default=45, ge=1)
+    sandbox_task_time_limit_seconds: int = Field(default=60, ge=2)
+    sandbox_max_navigations: int = Field(default=10, ge=1)
+    sandbox_max_bytes: int = Field(default=5_000_000, ge=1024)
 
     entropy_threshold: float = Field(default=4.5)
     entropy_min_length: int = Field(default=24)

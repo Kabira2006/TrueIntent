@@ -21,9 +21,11 @@ from app.api.v1.schemas import (
 )
 from app.config import get_settings
 from app.core.aggregator import AdvisoryPillar
+from app.core.models import Indicator
 from app.core.service import run_fast_path
 from app.db.models import DomainRecord, ScanJob
 from app.db.session import get_db
+from app.workers.tasks import sandbox_scan
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -106,8 +108,8 @@ async def _domain_repository(session: AsyncSession, domain: str) -> DomainRecord
 
 
 def enqueue_sandbox(scan_id: uuid.UUID) -> None:
-    """Chunk 6 hook: enqueue the isolated browser task when it is implemented."""
-    logger.info("sandbox enqueue hook called scan_id=%s", scan_id)
+    """Queue the isolated browser task without doing browser work in the API."""
+    sandbox_scan.delay(str(scan_id))
 
 
 @router.post(
@@ -163,7 +165,37 @@ async def create_scan(
     session.add(job)
     await session.commit()
     if should_enqueue_sandbox:
-        enqueue_sandbox(scan_id)
+        try:
+            enqueue_sandbox(scan_id)
+        except Exception as error:
+            logger.exception(
+                "sandbox enqueue failed scan_id=%s error_type=%s",
+                scan_id,
+                type(error).__name__,
+            )
+            job.status = "FAILED"
+            job.error_message = (
+                f"Sandbox task could not be queued ({type(error).__name__})."
+            )
+            job.sandbox_indicators = AdvisoryPillar(
+                status="UNAVAILABLE",
+                indicators=[
+                    Indicator(
+                        code="SANDBOX_UNAVAILABLE",
+                        severity="info",
+                        message="The browser check could not be queued.",
+                        evidence={"status": "UNAVAILABLE"},
+                    )
+                ],
+            ).model_dump(mode="json")
+            if job.final_advisory_status != "HIGH_RISK_INDICATORS_DETECTED":
+                job.final_advisory_status = "INCONCLUSIVE"
+            job.completed_at = datetime.now(_UTC)
+            await session.commit()
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="The browser check could not be queued; the fast-path report was saved.",
+            ) from error
 
     summary = FastPathSummary(
         payload_type=fast_result.classification.payload_type,
@@ -219,7 +251,9 @@ def _pillar_from_storage(value: object) -> AdvisoryPillar:
     if not isinstance(value, dict):
         return AdvisoryPillar(status="UNAVAILABLE", indicators=[])
     try:
-        return AdvisoryPillar.model_validate(value)
-    except ValueError:
+        return AdvisoryPillar.model_validate(
+            {"status": value.get("status"), "indicators": value.get("indicators", [])}
+        )
+    except (TypeError, ValueError):
         logger.error("stored advisory pillar did not match the API schema")
         return AdvisoryPillar(status="UNAVAILABLE", indicators=[])

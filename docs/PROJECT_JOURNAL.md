@@ -12,7 +12,8 @@ If you do not code, start here. Read the "In one minute" section of the latest c
 - [Chapter 3: Understanding what was pasted (input router and UPI links)](#chapter-3-understanding-what-was-pasted-input-router-and-upi-links)
 - [Chapter 4: Safe network checks (netguard, domain age, threat feeds)](#chapter-4-safe-network-checks-netguard-domain-age-threat-feeds)
 - [Chapter 5: Putting the checks together (report, score and API)](#chapter-5-putting-the-checks-together-report-score-and-api)
-- Chapters 2 and 6 to 9: to be appended, one per chunk.
+- [Chapter 6: The background browser sandbox](#chapter-6-the-background-browser-sandbox)
+- Chapters 2 and 7 to 9: to be appended, one per chunk.
 
 ## Chapter 0: The big picture and setup
 Date: 2026-10-16 | Commit message: chunk-0: repo rules, skeleton and journal
@@ -640,3 +641,112 @@ We give every scan the same three-part report format so people and later softwar
 - Fixed-window rate limit: a cap on how many requests one client can make during a set time interval.
 - SHA-256: a standard method that turns input text into a fixed-length fingerprint.
 - TestClient: a local test tool that sends HTTP-like requests to the application without deploying it.
+
+## Chapter 6: The background browser sandbox
+Date: 2026-10-23 | Commit message: chunk-6: playwright sandbox worker
+### 1. In one minute
+We added a background browser worker to look at what a web page actually does after someone submits its address. A real browser can reveal redirects, hidden frames, and forms that ask for passwords or payment details. The worker checks every page request before allowing it, records findings, and throws away the browser context when the visit ends.
+
+### 2. Why we did this
+A link alone cannot show the page's final destination or what its forms ask a visitor to enter. Pages can redirect after opening, load hidden content, or show different elements to an ordinary browser than to a text-only check. The browser runs as a Celery task after the quick scan so that slow page loading does not hold the API request open.
+
+A sandbox is like a disposable room with a locked door: one visit happens inside a fresh browser context, and that context is closed afterward. It reduces exposure, but it is not a perfect barrier against every browser or operating-system weakness.
+
+### 3. How it works
+```mermaid
+sequenceDiagram
+  participant A as "Scan API"
+  participant Q as "Redis ticket queue"
+  participant W as "Celery worker"
+  participant B as "Fresh Chromium context"
+  participant N as "Netguard"
+  participant D as "PostgreSQL"
+  A->>D: "Save fast-path report"
+  A->>Q: "Queue scan ID"
+  Q-->>W: "Deliver one task ticket"
+  W->>D: "Load saved scan"
+  W->>N: "Check initial destination"
+  W->>B: "Open disposable browser context"
+  B->>N: "Check each page request"
+  N-->>B: "Allow public target or block it"
+  B-->>W: "Return DOM clues and image hash"
+  W->>D: "Update sandbox pillar and status"
+```
+Caption: The API hands the scan ID to a queue; the worker performs browser work and updates the existing report.
+
+```mermaid
+flowchart TD
+  R["Browser request"] --> S{"HTTP or HTTPS?"}
+  S -->|No| X["Block and record attempt"]
+  S -->|Yes| N["Run netguard on this request"]
+  N --> D{"Any address is private or special?"}
+  D -->|Yes| X
+  D -->|No| T{"Navigation limit or blocked resource?"}
+  T -->|Yes| X
+  T -->|No| A["Allow request to continue"]
+  A --> R
+```
+Caption: Redirects and subresources return through the same destination check; the browser does not get a one-time pass.
+
+Celery is the background task runner. Redis is the message queue, a shared ticket rail. Think of the API as a restaurant waiter who writes an order ticket, Redis as the rail that holds it, and the Celery worker as the kitchen that prepares it. The API saves the fast report, places the scan ID on the rail, and returns. The worker later updates the saved report.
+
+For each scan, the worker loads the existing database row and its fast-path domain-age clue. It validates the first URL with netguard, then starts headless Chromium with a new context. The context has a fixed viewport and user agent, no saved browser state, no granted permissions, blocked service workers, and downloads disabled. It dismisses page dialogs. Each HTTP or HTTPS request, including redirect and subresource requests, is checked again; non-web schemes, media, WebSockets, excessive navigations, and private or special addresses are blocked and recorded as indicators.
+
+The worker records redirect hosts without query strings, audits the page's document structure for forms and hidden content, and checks whether a new domain presents a login-like form. It captures one 1280 by 720 screenshot in memory, calculates a perceptual hash (a compact fingerprint of visual appearance), discards the image bytes, and stores the hash with host-only navigation metadata. It then closes the browser context. If the check fails or times out, the job becomes `FAILED`, an error is recorded, and the already-saved fast-path pillars remain intact.
+
+We deliberately do not save screenshots, accept downloads, or intentionally visit internal addresses. A local loopback exception exists only as a private test function argument that defaults off; no environment variable, API input, or Celery task can turn it on.
+
+### 4. Decisions and reasoning
+| decision | options considered | why we chose this | trade-off |
+|---|---|---|---|
+| Run browser work in Celery | Keep the API request open or queue a background task | A browser visit can take longer than fast checks; the API can return while the worker continues. | The report is initially pending. |
+| Fresh context for every scan | Reuse a logged-in browser context or create and close one | Fresh state prevents cookies and storage from carrying between hostile pages. | Browser startup costs time and resources. |
+| Recheck each request | Check only the first address or check redirects and page resources too | A page can redirect or request an internal address after its first load. | DNS rebinding between checking and connecting is still possible. |
+| Keep image fingerprint, discard image | Store screenshot or compute an in-memory hash | A compact hash supports later comparisons without retaining page images. | A hash cannot show a reviewer what the page looked like. |
+| Use Chromium sandbox and seccomp | Disable browser sandbox or enable browser and container layers | The worker runs as non-root, requests Chromium's sandbox, and uses Playwright's version-matched seccomp profile. | Linux container execution could not be checked because the Docker engine was unavailable. |
+| Preserve fast results on failure | Replace the job with a failure or keep its earlier findings | A browser failure should not erase checks that already finished. | A failed job can still have an incomplete visual pillar. |
+
+### 5. What we built
+- `link-security-analyzer/backend/app/core/sandbox.py`: browser lifecycle, per-request netguard routing, redirect tracking, DOM audit, byte/navigation limits, and in-memory image hashing.
+- `link-security-analyzer/backend/app/workers/celery_app.py`: Redis-backed Celery application with concurrency two, late acknowledgments, and task time limits.
+- `link-security-analyzer/backend/app/workers/tasks.py`: sync database task that runs the async browser routine, recomputes the report, and preserves fast results on failure.
+- `link-security-analyzer/backend/app/api/v1/endpoints.py`: dispatches the Celery task and reports queue errors explicitly.
+- `link-security-analyzer/backend/app/config.py`: sandbox time, navigation, and byte-limit settings.
+- `link-security-analyzer/backend/Dockerfile.worker`: starts the configured sandbox task consumer.
+- `link-security-analyzer/backend/tests/test_sandbox.py`: mocked network-guard and DOM checks plus an explicitly opted-in local-server integration test.
+- `link-security-analyzer/backend/tests/test_sandbox_task.py`: task success, failure, retention, and Celery configuration tests.
+- `link-security-analyzer/backend/tests/test_api.py`: Celery dispatch and queue-failure API tests.
+- `link-security-analyzer/backend/tests/fixtures/sandbox_login.html`: local static page used by DOM audit tests.
+- `link-security-analyzer/backend/seccomp_profile.json`: Playwright 1.63.0 seccomp profile.
+- `link-security-analyzer/docker-compose.yml`: non-root worker settings, resource limits, temporary filesystem, Chromium seccomp profile, and worker health check.
+- `link-security-analyzer/.env.example`: documented sandbox limit settings.
+- `link-security-analyzer/README.md`: sandbox threat model and production egress guidance.
+- `docs/PROJECT_JOURNAL.md`: this chapter and table-of-contents entry.
+
+### 6. What actually happened
+The final complete backend run reported **145 passed in 12.35 seconds**, including the one local Playwright integration test. Pytest also emitted one `RuntimeWarning` from the existing Chunk 5 `service.py` cache-write timeout test: coroutine `_write_cache` was never awaited. That unrelated warning is recorded rather than changed in this chunk. The integration server exercised two HTTP redirects and a cross-host form. The test's explicit loopback exception was enabled only by passing a private function argument; it is off by default and is not configurable through the environment. Ruff reported **All checks passed**, and all eight changed Python files passed the formatting check. Docker Compose configuration syntax also validated.
+
+The pinned Playwright Chromium browser was installed locally and the browser integration test passed. Chromium is launched with its sandbox enabled (`chromium_sandbox=True`); no `--no-sandbox` override was used. This is the actual local test result, not proof that Linux Docker will start the sandbox with the host's kernel settings.
+
+Docker Compose could not be run: Docker Desktop's Linux engine pipe was missing. The profile JSON and Compose configuration were validated, but container startup, non-root Chromium sandbox operation, memory limits, and egress behavior are **not verified**. One first unit-test attempt failed because its fake media request was accidentally marked as a navigation; the fake was corrected, and the final suite passed. A whole-repository formatting check also pointed to the existing `backend/alembic/env.py`; it was left unchanged because it is outside this chunk.
+
+### 7. Limits and honest weaknesses
+| threat | what we did | residual risk |
+|---|---|---|
+| DNS rebinding between validation and connection | Check the starting URL and every intercepted request with netguard. | DNS may change after validation but before Chromium connects; this race is not fully solved. |
+| Worker reaches private services | Block private, loopback, link-local, multicast, reserved, and other non-public targets; block local service names. | The worker still shares a Docker network with Redis and PostgreSQL. Production should use network isolation and an outbound firewall rule denying internal ranges. |
+| Browser escape | Use a non-root account, Chromium's sandbox, and the version-matched seccomp profile. Do not pass `--no-sandbox`. | The Linux container's Chromium sandbox was not runtime-verified here; host kernel and Docker settings affect it. Browser vulnerabilities remain possible. |
+| Excessive or persistent page activity | Limit the browser task time, page timeout, navigations, and observed network bytes; disable downloads, media, sockets, and service workers. | A browser bug, a short in-flight transfer, or a network mechanism outside routed HTTP requests can bypass these limits; production egress filtering remains necessary. |
+| Retention of page images | Hash an in-memory screenshot and discard the image. | The worker temporarily processes page content and image bytes in memory. |
+
+### 8. How to explain this to a judge in 30 seconds
+Some clues appear only after a page opens, so a quick text check cannot find them all. We put each visit in a fresh, disposable browser room. A background worker checks every request before it leaves the room, looks for redirects and sensitive forms, keeps a small visual fingerprint, and throws the room away. If the browser fails, the earlier fast report stays saved. DNS rebinding and the worker's shared Docker network remain honest risks that need production network controls.
+
+### 9. New terms
+- Playwright: a tool that controls a real browser from code.
+- Celery: a task runner that performs work outside the web request.
+- Message queue: a shared line of task tickets waiting for a worker.
+- DOM: the browser's structured representation of a page, including forms and frames.
+- Seccomp: a Linux filter that limits which system calls a process can make.
+- Perceptual hash: a short visual fingerprint that can help compare images without retaining the image.
+- DNS rebinding: a trick where a domain changes its address after it passes an initial check.
