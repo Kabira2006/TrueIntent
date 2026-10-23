@@ -11,7 +11,8 @@ If you do not code, start here. Read the "In one minute" section of the latest c
 - [Chapter 1: Infrastructure, config and database](#chapter-1-infrastructure-config-and-database)
 - [Chapter 3: Understanding what was pasted (input router and UPI links)](#chapter-3-understanding-what-was-pasted-input-router-and-upi-links)
 - [Chapter 4: Safe network checks (netguard, domain age, threat feeds)](#chapter-4-safe-network-checks-netguard-domain-age-threat-feeds)
-- Chapters 2 and 5 to 9: to be appended, one per chunk.
+- [Chapter 5: Putting the checks together (report, score and API)](#chapter-5-putting-the-checks-together-report-score-and-api)
+- Chapters 2 and 6 to 9: to be appended, one per chunk.
 
 ## Chapter 0: The big picture and setup
 Date: 2026-10-16 | Commit message: chunk-0: repo rules, skeleton and journal
@@ -489,3 +490,153 @@ Before our server looks up a pasted address, we check that it does not point bac
 - Threat feed: a service that shares previously recorded reports about harmful links.
 - Redis limiter: a shared counter that prevents a service from being queried more often than its allowed rate.
 - DNS rebinding: a trick where a domain returns a public address during checking and a private address later.
+
+## Chapter 5: Putting the checks together (report, score and API)
+Date: 2026-10-23 | Commit message: chunk-5: aggregator, service layer and API
+### 1. In one minute
+We connected the existing checks to one library service and a small web API. The service sorts each input, runs checks together within a time budget, and turns their clues into three readable pillars. The API returns a quick summary first and lets the caller fetch the report by its scan ID. A future browser sandbox has a clearly marked enqueue hook, but this chunk does not implement that worker.
+
+### 2. Why we did this
+Separate checks are hard to read and use consistently. The aggregator gives each clue a stable shape and groups clues into three pillars: technical URL analysis (the spelling and setup of a web address), visual brand analysis (whether a page resembles a known brand), and transaction context analysis (payment details in a UPI link). A stable shape means other code can reliably find the same fields without guessing.
+
+The report says “indicators detected,” “no indicators detected,” or “inconclusive.” It does not say “safe” or “fraud.” A missing clue is not proof that a link is harmless, and a warning can have an innocent explanation; confident-sounding labels could mislead someone into taking a harmful action.
+
+### 3. How it works
+```mermaid
+sequenceDiagram
+  participant P as "Person or calling module"
+  participant A as "Scan API"
+  participant S as "Fast-path service"
+  participant C as "Cache and checks"
+  participant D as "Database"
+  P->>A: "POST input"
+  A->>S: "Classify and check within budget"
+  S->>C: "Read cache or run checks together"
+  C-->>S: "Clues, unavailable results, or timeout"
+  S-->>A: "Three pillars and summary"
+  A->>D: "Save scan job"
+  A-->>P: "202 scan ID and polling URL"
+  P->>A: "GET scan ID"
+  A->>D: "Read saved report"
+  D-->>A: "Status and pillars"
+  A-->>P: "200 readable report"
+```
+Caption: The first answer contains a scan ID; a later GET retrieves the saved pillar report.
+
+```mermaid
+flowchart TD
+  I["Input and check results"] --> T["Technical URL clues"]
+  I --> V["Visual brand clues"]
+  I --> X["Transaction context clues"]
+  T --> M["Combine indicators and availability"]
+  V --> M
+  X --> M
+  M --> O{"High clue or missing check?"}
+  O -->|High clue| H["High-risk indicators detected"]
+  O -->|Missing check| U["Inconclusive"]
+  O -->|Otherwise with clues| S["Some indicators detected"]
+  O -->|No clues and checks available| N["No indicators detected"]
+```
+Caption: The overall wording depends on the clues and on whether the relevant checks actually completed.
+
+The library entry point classifies the input, then starts relevant checks concurrently under a five-second default budget. If a check fails or is too slow, its pillar reports unavailable information instead of crashing the scan or inventing a result. Results are cached for one hour using a SHA-256 digest of the normalized input; a digest is a fixed-length fingerprint, not the input itself. Scan submission and report polling use separate Redis fixed-window limits, defaulting to 20 submissions and 120 report reads per minute per client address.
+
+The three pillars contain indicators with four stable fields: `code` is a machine-readable name, `severity` is info/low/medium/high, `message` is a plain-language explanation, and `evidence` contains supporting facts. Pillar statuses are `NOT_APPLICABLE`, `NO_INDICATORS`, `FLAGGED`, `UNAVAILABLE`, or `PENDING`. The overall result is `NO_INDICATORS_DETECTED`, `SOME_INDICATORS_DETECTED`, `HIGH_RISK_INDICATORS_DETECTED`, or `INCONCLUSIVE`.
+
+The flat `signal_vector` is a set of numeric and boolean facts for later combination, such as URL entropy, domain age, subdomain depth, feed matches, and UPI flags. The internal heuristic score is a weighted sum of indicator severities, capped at 1. It is explicitly **uncalibrated**: no measured dataset has shown that a score of, for example, 0.8 corresponds to an 80% chance of harm. It is not in the user-facing API and must never be shown as a probability or percentage. A later trained model may replace the heuristic and combine these features with the future text-scam engine; that model is not part of this chunk.
+
+For web links, the API saves a `FAST_PATH_DONE` result when sandboxing is enabled and calls the Chunk 6 enqueue hook; otherwise it marks the job `COMPLETED`. The current hook only logs the scan ID. UPI-only and QR-text requests do not queue a browser job.
+
+### 4. Decisions and reasoning
+| decision | options considered | why we chose this | trade-off |
+|---|---|---|---|
+| Report clues, not verdicts | Say “safe/fraud” or report indicators | A few checks cannot know the full situation; cautious wording avoids false confidence. | Users must interpret clues in context. |
+| Keep score internal | Show a percentage or keep an uncalibrated feature | There is no calibration data to make a percentage honest. | The user sees pillars and evidence, not a single score. |
+| Deadline and failure degradation | Wait indefinitely or return partial results | One slow dependency must not hold up all checks; unavailable is more honest than guessing. | Some reports are inconclusive. |
+| Return fast result, poll for later work | Hold the request open or split fast and background work | The browser sandbox is slow and belongs in a later worker chunk. | The visual pillar can remain pending. |
+| Cache and fixed-window limits | Recompute every time or allow unlimited requests | A one-hour cache saves repeat work; per-client limits constrain request bursts. | Redis availability is required for limiting. |
+| Missing lexical check | Invent URL clues or mark the check unavailable | `app.core.lexical` is not present in this repository yet, so no lexical findings are fabricated. | URL scans currently tend to be inconclusive. |
+
+### 5. What we built
+- `link-security-analyzer/backend/app/core/aggregator.py`: pillar statuses, overall indicator, signal vector, and internal weighted heuristic.
+- `link-security-analyzer/backend/app/core/service.py`: library entry point, concurrent bounded checks, failure degradation, and one-hour result cache.
+- `link-security-analyzer/backend/app/api/v1/schemas.py`: validated request, accepted response, summary, and polling response contracts.
+- `link-security-analyzer/backend/app/api/v1/endpoints.py`: POST/GET routes, database persistence, per-client rate limits, and the sandbox hook.
+- `link-security-analyzer/backend/app/main.py`: mounts the versioned API router.
+- `link-security-analyzer/backend/app/core/threat_feeds.py`: wording adjustment to keep generated messages within advisory wording rules.
+- `link-security-analyzer/backend/tests/test_aggregator.py`: pillar, score, vector, and forbidden-wording checks.
+- `link-security-analyzer/backend/tests/test_service.py`: mocked service, cache, timeout, and check-failure cases.
+- `link-security-analyzer/backend/tests/test_api.py`: mocked database/Redis API, validation, polling, and rate-limit cases.
+- `docs/PROJECT_JOURNAL.md`: this chapter and its table-of-contents entry.
+
+### 6. What actually happened
+The backend-wide Ruff check reported “All checks passed.” The full pytest suite reported **128 passed in 4.78 seconds**; the three new Chunk 5 test files contain **22 tests**. The tests use fake checks, Redis, and database dependencies, so they do not make network calls.
+
+A TestClient run of the real API routes with fake fast-path, database, and Redis dependencies returned POST **202** and polling GET **200**. The sample below is that run; `example[.]com` is defanged for this journal. The URL check itself was deliberately unavailable because the lexical analyzer module does not yet exist, and the visual pillar was pending because the sandbox worker is a later chunk.
+
+POST response:
+```json
+{
+  "scan_id": "6a4ab694-b1f1-43f1-9a73-726a647865dc",
+  "status": "FAST_PATH_DONE",
+  "fast_path_summary": {
+    "payload_type": "URL",
+    "domain": "example[.]com",
+    "is_punycode": false,
+    "shannon_entropy": 2.75,
+    "domain_age_days": 200,
+    "threat_feed_matches": 0
+  },
+  "poll_url": "http://testserver/api/v1/scan/6a4ab694-b1f1-43f1-9a73-726a647865dc"
+}
+```
+
+Polling GET response:
+```json
+{
+  "scan_id": "6a4ab694-b1f1-43f1-9a73-726a647865dc",
+  "status": "FAST_PATH_DONE",
+  "overall_indicator": "INCONCLUSIVE",
+  "advisory_report": {
+    "technical_url_analysis": {
+      "status": "UNAVAILABLE",
+      "indicators": [{
+        "code": "CHECK_UNAVAILABLE",
+        "severity": "info",
+        "message": "URL spelling checks could not be completed.",
+        "evidence": {"status": "UNAVAILABLE"}
+      }]
+    },
+    "visual_brand_analysis": {"status": "PENDING", "indicators": []},
+    "transaction_context_analysis": {
+      "status": "NOT_APPLICABLE",
+      "indicators": []
+    }
+  }
+}
+```
+
+Reading guide: `scan_id` identifies the saved job; `status` says the fast path has finished but background work may remain; the summary reports the recognized input and available fast facts; `overall_indicator` is inconclusive because a relevant check is unavailable; each pillar shows its own status and evidence; `CHECK_UNAVAILABLE` explains why there is no URL spelling result. `example[.]com` is only a documentation placeholder, and the entropy/domain-age values were supplied by the test double, not measured from a live site.
+
+A separate local Uvicorn/curl smoke test also returned **202** for POST and **200** for polling GET with the same report shape and fake dependencies. Docker Compose was **not verified**: Docker Desktop's Linux engine pipe was unavailable. This smoke test therefore verifies HTTP routing and response shape, not a live end-to-end deployment. The missing lexical module and sandbox worker are deviations from the requested fully connected result; neither is silently represented as a completed check.
+
+### 7. Limits and honest weaknesses
+- The `app.core.lexical` URL analyzer is absent, so URL spelling analysis returns unavailable; URL reports can therefore be inconclusive.
+- The sandbox enqueue function is a logging hook only. No browser worker or visual-brand analysis was implemented.
+- The API smoke run used mocked database, Redis, and checks. Docker-backed deployment and live provider calls were not verified.
+- Redis failure prevents enforcing request limits and is reported as a service error; it is not treated as permission to bypass the limiter.
+- The score has no statistical calibration and is not a probability.
+- These indicators describe link contents and check availability, not the user's intent or circumstances.
+
+### 8. How to explain this to a judge in 30 seconds
+We give every scan the same three-part report format so people and later software can understand the clues consistently. The service runs quick checks together, saves the result, and provides a scan ID for polling. It uses cautious wording because clues are not proof. Its internal score is an uncalibrated engineering feature, not a probability shown to users. If an external check is slow or missing, the report says so rather than guessing.
+
+### 9. New terms
+- Pillar: one named group of related indicators in the report.
+- Signal vector: a flat list of numeric facts prepared for later analysis.
+- Uncalibrated heuristic: a rule-based score that has not been tested as a probability.
+- Fast path: the set of quick checks used to return an early report.
+- Polling: asking the API again later for a saved job's current result.
+- Fixed-window rate limit: a cap on how many requests one client can make during a set time interval.
+- SHA-256: a standard method that turns input text into a fixed-length fingerprint.
+- TestClient: a local test tool that sends HTTP-like requests to the application without deploying it.

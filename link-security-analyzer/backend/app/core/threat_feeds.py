@@ -153,7 +153,7 @@ async def lookup_google_safe_browsing(
                     Indicator(
                         code="GSB_MATCH",
                         severity="high",
-                        message="Google Safe Browsing has a prior threat-list match for this URL.",
+                        message="Google's browsing threat list has a prior match for this URL.",
                         evidence={
                             "match_count": len(matches),
                             "threat_types": ",".join(
@@ -293,14 +293,17 @@ def _cache_key(feed: str, url: str) -> str:
 
 
 def _unavailable(feed: str) -> FeedLookup:
+    display_name = (
+        "Google threat list" if feed == "Google Safe Browsing" else feed
+    )
     return FeedLookup(
         status="UNAVAILABLE",
         indicators=[
             Indicator(
                 code="THREAT_FEED_UNAVAILABLE",
                 severity="info",
-                message=f"{feed} could not be checked; this does not mean the URL is clear or harmful.",
-                evidence={"feed": feed, "status": "UNAVAILABLE"},
+                message=f"{display_name} could not be checked; this does not mean the URL is clear or harmful.",
+                evidence={"feed": display_name, "status": "UNAVAILABLE"},
             )
         ],
     )

@@ -9,6 +9,7 @@ from fastapi import FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
+from app.api.v1.endpoints import router as scan_router
 from app.config import get_settings
 from app.db.session import get_async_engine
 
@@ -26,7 +27,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 settings = get_settings()
 
-app = FastAPI(title="TrueIntent Link Security Analyzer", version="0.1.0", lifespan=lifespan)
+app = FastAPI(
+    title="TrueIntent Link Security Analyzer", version="0.1.0", lifespan=lifespan
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -35,6 +38,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(scan_router, prefix="/api/v1")
 
 
 async def _check_db() -> bool:
@@ -67,4 +71,8 @@ async def healthz(response: Response) -> dict[str, object]:
     healthy = db_ok and redis_ok
     if not healthy:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-    return {"status": "ok" if healthy else "degraded", "database": db_ok, "redis": redis_ok}
+    return {
+        "status": "ok" if healthy else "degraded",
+        "database": db_ok,
+        "redis": redis_ok,
+    }
