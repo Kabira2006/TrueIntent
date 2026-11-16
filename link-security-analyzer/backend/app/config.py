@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     netguard_denylist: str = Field(default="localhost,redis,postgres,backend,worker")
     threat_feed_timeout_seconds: float = Field(default=3.0)
     fast_path_budget_seconds: float = Field(default=5.0)
+    risk_score_dangerous_threshold: int = Field(default=70)
+    risk_score_suspicious_threshold: int = Field(default=35)
     sandbox_enabled: bool = Field(default=True)
     sandbox_page_timeout_seconds: int = Field(default=15)
     sandbox_task_soft_time_limit_seconds: int = Field(default=45, ge=1)

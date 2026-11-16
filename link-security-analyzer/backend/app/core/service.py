@@ -21,8 +21,10 @@ from app.core.aggregator import AdvisoryReport, build_report
 from app.core.infrastructure import DnsInfo, DomainInfo, get_domain_info, resolve_dns
 from app.core.input_router import classify_input
 from app.core.models import Indicator, InputClassification
+from app.core.runner import CheckGroup, CheckResult, CheckSpec, run_checks
 from app.core.threat_feeds import FeedLookup, ThreatFeedResult, check_threat_feeds
 from app.core.upi import UpiResult, analyze_upi
+from app.core.verdict import compute_coverage, compute_verdict
 
 logger = logging.getLogger(__name__)
 _CACHE_TTL_SECONDS = 60 * 60
@@ -54,6 +56,11 @@ class FastPathResult(BaseModel):
     domain_age_days: int | None
     threat_feed_matches: int
     advisory_report: AdvisoryReport
+    checks: list[CheckResult] = []
+    verdict: Literal["DANGEROUS", "SUSPICIOUS", "LIKELY_SAFE", "UNKNOWN"] = "UNKNOWN"
+    risk_score: int = 0
+    risk_score_note: str = "Heuristic risk score, not a probability."
+    coverage_level: Literal["low", "medium", "high"] = "low"
 
 
 async def run_fast_path(
@@ -96,9 +103,7 @@ async def run_fast_path(
             budget_seconds=remaining_budget,
         )
         try:
-            await _wait_for_remaining(
-                _write_cache(cache, cache_key, result), deadline
-            )
+            await _wait_for_remaining(_write_cache(cache, cache_key, result), deadline)
         except TimeoutError:
             logger.info("fast-path cache write exceeded the remaining time budget")
         except Exception:  # noqa: BLE001 - non-critical cache write
@@ -121,6 +126,7 @@ async def _analyze(
     domain_repository: Callable[..., Any] | None,
     budget_seconds: float,
 ) -> FastPathResult:
+    """Run bounded checks through the runner and compute verdict + coverage."""
     domain = _domain_from_web_url(payload)
     is_web_payload = classification.payload_type == "URL" or (
         classification.payload_type == "QR_TEXT"
@@ -134,74 +140,71 @@ async def _analyze(
         )
         or (is_web_payload and _has_upi_query(payload))
     )
-    lexical_task = asyncio.create_task(_run_lexical(payload))
-    if is_web_payload and domain is not None:
-        infra_task = asyncio.create_task(
-            _run_infrastructure(domain, cache, settings, domain_repository)
-        )
-        feed_task = asyncio.create_task(_run_feeds(payload, cache, settings))
-    else:
-        infra_task = asyncio.create_task(_immediate(_unavailable_infrastructure()))
-        feed_task = asyncio.create_task(_immediate(_unavailable_feed_result()))
-    upi_task = asyncio.create_task(_run_upi(payload)) if needs_upi else None
-    tasks = [lexical_task, infra_task, feed_task]
-    if upi_task is not None:
-        tasks.append(upi_task)
 
-    _, pending = await asyncio.wait(
-        tasks,
-        timeout=budget_seconds,
-        return_when=asyncio.ALL_COMPLETED,
+    async def lexical_check(ctx: Any) -> Any:
+        return await _run_lexical(ctx)
+
+    async def infra_check(ctx: Any) -> Any:
+        return await _run_infrastructure(domain, cache, settings, domain_repository)
+
+    async def feeds_check(ctx: Any) -> Any:
+        return await _run_feeds(payload, cache, settings)
+
+    async def upi_check(ctx: Any) -> Any:
+        return await _run_upi(payload)
+
+    named_checks: list[tuple[str, Callable[[Any], Any], CheckGroup]] = [
+        ("lexical", lexical_check, "lexical"),
+        ("infrastructure", infra_check, "infrastructure"),
+        ("threat_feeds", feeds_check, "external_reputation"),
+    ]
+    if needs_upi:
+        named_checks.append(("upi", upi_check, "transaction"))
+
+    check_results = await run_checks(
+        [
+            CheckSpec(
+                name=name,
+                fn=fn,
+                timeout_s=settings.fast_path_budget_seconds,
+                group=group,
+            )
+            for name, fn, group in named_checks
+        ],
+        payload,
     )
-    for task in pending:
-        task.cancel()
-    if pending:
-        await asyncio.gather(*pending, return_exceptions=True)
 
-    lexical = _task_result(lexical_task, _unavailable_check("Lexical URL analysis"))
-    infra = _task_result(infra_task, _unavailable_infrastructure())
-    feeds = _task_result(feed_task, _unavailable_feed_result())
-    upi = (
-        _task_result(upi_task, _unavailable_check("UPI analysis"))
-        if upi_task is not None
-        else None
-    )
-    if pending:
-        for task in pending:
-            if task is lexical_task:
-                lexical = _unavailable_check("Lexical URL analysis")
-            elif task is infra_task:
-                infra = _unavailable_infrastructure()
-            elif task is feed_task:
-                feeds = _unavailable_feed_result()
-            elif task is upi_task:
-                upi = _unavailable_check("UPI analysis")
-
-    upi_for_report = upi if needs_upi else None
     report = build_report(
-        lexical,
-        infra,
-        feeds,
-        upi_for_report,
+        check_results["lexical"],
+        check_results["infrastructure"],
+        check_results["threat_feeds"],
+        check_results.get("upi") if needs_upi else None,
         None,
         payload_type=classification.payload_type,
         web_payload=is_web_payload,
     )
-    features = _features(lexical)
+    coverage = compute_coverage(check_results)
+    verdict, score, _reason_ids = compute_verdict(check_results, coverage)
+    features = _features(check_results["lexical"])
     entropy = _finite_number(
         features.get("shannon_entropy", features.get("entropy", 0.0))
     )
     is_punycode = bool(features.get("is_punycode", _host_has_punycode(payload)))
+    feed_result = check_results["threat_feeds"]
     return FastPathResult(
         classification=classification,
         analysis_payload=payload,
         domain=domain,
         is_punycode=is_punycode,
         shannon_entropy=entropy,
-        domain_age_days=_domain_age(infra),
-        threat_feed_matches=int(feeds.features.get("gsb_match_count", 0))
-        + int(feeds.features.get("vt_malicious_count", 0)),
+        domain_age_days=_domain_age(check_results["infrastructure"]),
+        threat_feed_matches=int(feed_result.detail.get("gsb_match_count", 0))
+        + int(feed_result.detail.get("vt_malicious_count", 0)),
         advisory_report=report,
+        checks=list(check_results.values()),
+        verdict=verdict,
+        risk_score=score,
+        coverage_level=coverage.level,
     )
 
 
@@ -370,7 +373,7 @@ def _indicators_from_error(error: Any, label: str) -> list[Indicator]:
         Indicator(
             code="CHECK_UNAVAILABLE",
             severity="info",
-            message=f"{label} checks could not be completed.",
+            message=f"{label} could not be completed ({type(error).__name__}).",
             evidence={"check": label, "status": "UNAVAILABLE"},
         )
     ]
@@ -407,7 +410,9 @@ def _host_has_punycode(payload: str) -> bool:
 
 
 def _has_upi_query(payload: str) -> bool:
-    query = urlsplit(payload).query.lower()
+    query = urlsplit(
+        payload if "://" in payload else f"https://{payload}"
+    ).query.lower()
     return bool(re.search(r"(?:^|&)(?:pa|pn)=", query))
 
 
@@ -431,8 +436,6 @@ def _finite_number(value: Any) -> float:
 
 def _indicators_from_value(value: Any) -> list[Indicator]:
     raw = getattr(value, "indicators", [])
-    if not isinstance(raw, list):
-        return []
     return [item for item in raw if isinstance(item, Indicator)]
 
 
@@ -443,10 +446,14 @@ def _cache_key(normalized_input: str) -> str:
 
 async def _read_cache(cache: redis.Redis, key: str) -> FastPathResult | None:
     try:
-        cached = await cache.get(key)
-        return FastPathResult.model_validate_json(cached) if cached else None
-    except (RedisError, OSError, ValueError, TypeError) as error:
-        logger.info("fast-path cache read unavailable (%s)", type(error).__name__)
+        raw = await cache.get(key)
+    except (RedisError, OSError):
+        return None
+    if raw is None:
+        return None
+    try:
+        return FastPathResult.model_validate_json(raw)
+    except Exception:  # noqa: BLE001 - corrupt cache is treated as a miss
         return None
 
 
@@ -462,5 +469,5 @@ async def _wait_for_remaining(
 ) -> _ResultType:
     remaining = deadline - asyncio.get_running_loop().time()
     if remaining <= 0:
-        raise TimeoutError
+        raise TimeoutError("no budget remaining")
     return await asyncio.wait_for(awaitable, timeout=remaining)

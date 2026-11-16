@@ -99,19 +99,12 @@ def build_report(
         *visual.indicators,
         *transaction.indicators,
     ]
-    any_unavailable = any(
-        pillar.status in {"UNAVAILABLE", "PENDING"}
-        for pillar in (technical, visual, transaction)
-    )
     if any(indicator.severity == "high" for indicator in all_indicators):
         overall: OverallIndicator = "HIGH_RISK_INDICATORS_DETECTED"
-    elif any_unavailable:
-        overall = "INCONCLUSIVE"
     elif all_indicators:
         overall = "SOME_INDICATORS_DETECTED"
     else:
         overall = "NO_INDICATORS_DETECTED"
-
     signal_vector = _signal_vector(
         lexical, infra, feeds, upi, all_indicators, payload_type
     )
@@ -144,6 +137,16 @@ def _pillar(indicators: list[Indicator], *, checks: Sequence[Any]) -> AdvisoryPi
 
 def _indicators(result: Any) -> list[Indicator]:
     raw_indicators = _value(result, "indicators", [])
+    if not raw_indicators and hasattr(result, "signals"):
+        raw_indicators = [
+            {
+                "code": s.id,
+                "severity": s.severity,
+                "message": s.explain,
+                "evidence": s.evidence,
+            }
+            for s in result.signals
+        ]
     if not isinstance(raw_indicators, Sequence) or isinstance(
         raw_indicators, (str, bytes)
     ):
@@ -161,7 +164,9 @@ def _indicators(result: Any) -> list[Indicator]:
 
 def _check_status(result: Any) -> str | None:
     status = _value(result, "status")
-    return status if isinstance(status, str) else None
+    if isinstance(status, str):
+        return status.upper()
+    return None
 
 
 def _value(result: Any, name: str, default: Any = None) -> Any:
@@ -215,6 +220,8 @@ def _signal_vector(
 
 def _features(result: Any) -> Mapping[str, Any]:
     features = _value(result, "features", {})
+    if not features and hasattr(result, "detail"):
+        features = result.detail
     return features if isinstance(features, Mapping) else {}
 
 

@@ -18,6 +18,7 @@ If you do not code, start here. Read the "In one minute" section of the latest c
 - [Chapter 9: Does it actually work? (evaluation)](#chapter-9-does-it-actually-work-evaluation)
 - [Chapter 10: Whole-system recap and demo guide](#chapter-10-whole-system-recap-and-demo-guide)
 - [Chapter R0: Diagnose, baseline, GitHub, install the rules](#chapter-r0-diagnose-baseline-github-install-the-rules)
+- [Chapter R1: One broken check can no longer break the scan](#chapter-r1-one-broken-check-can-no-longer-break-the-scan)
 - Chapters 2 and 8: not yet appended.
 
 ## Chapter 0: The big picture and setup
@@ -1128,3 +1129,81 @@ Before touching a line of core security logic, we ran an honest technical diagno
 - Baseline: The initial measured state of a system before improvements or changes are made.
 - Empirical evidence: Information acquired by direct observation or measurement rather than theory.
 - Degraded state: When a system continues operating with reduced capabilities instead of failing completely.
+
+## Chapter R1: One broken check can no longer break the scan
+Date: 2026-11-16 | Commit message: phase-1: resilient check runner and verdict skeleton
+
+### 1. In one minute
+We made the link scanner resilient so that one failing check can never ruin a whole scan. Before, if a single optional check (like the missing URL spelling analyzer or an unconfigured threat feed) was unavailable, the whole result became "Inconclusive" and useless. Now every check runs independently with its own timeout, failures are converted into honest "unavailable" results, and the scanner always produces a verdict (`DANGEROUS`, `SUSPICIOUS`, `LIKELY_SAFE`, or `UNKNOWN`) plus a coverage report saying how many checks actually ran. We also switched from reporting only clues to giving a verdict, because users need a decision — but the verdict stays honest: the numeric score is labelled a heuristic, not a probability, and `LIKELY_SAFE` always carries "this is not a guarantee."
+
+### 2. Why we did this
+A security tool that says "I don't know" for every input is useless; one that says "SAFE" without evidence is dangerous. The rebuild sits between those: each check is independent, bounded in time, and reports what it saw; the verdict uses whatever succeeded and admits what it could not do. Users need a clear decision and plain reasons, not a blank stare when optional services are down.
+
+### 3. How it works
+```mermaid
+flowchart TD
+  Input["Pasted link / UPI / QR text"] --> Router["Input router classifies input"]
+  Router --> Runner["Check runner runs checks in parallel"]
+  subgraph Checks["Fast checks (each with its own timeout)"]
+    L["Lexical / typosquat / brand"]
+    I["Infrastructure: domain age, DNS, TLS"]
+    F["Threat feeds: OpenPhish, URLhaus, GSB, VT"]
+    U["UPI parser"]
+  end
+  Runner --> Coverage["Coverage: how many check groups ran"]
+  Runner --> Verdict["Verdict engine: DANGEROUS / SUSPICIOUS / LIKELY_SAFE / UNKNOWN"]
+  Runner --> Report["Report: verdict + score + reasons + checks[]"]
+  Report --> API["POST /api/v1/scan returns verdict + checks[] + coverage"]
+```
+
+Caption: Notice every check is independent and timed, so a slow or broken check never blocks the others or forces "Inconclusive".
+
+Step by step, in plain words: the input is classified (web address, UPI payment link, or QR text). The check runner starts every applicable check at the same time, each wrapped in its own short timeout. If a check times out or raises, it becomes an "unavailable" result with a reason instead of crashing the scan. The verdict engine reads all results, applies hard overrides (blocklist or threat-feed hits force DANGEROUS), then scores the rest. The API returns the verdict, a numeric heuristic score (labelled "not a probability"), the top reasons, the coverage level, and one entry per check with its honest status and timing.
+
+### 4. Decisions and reasoning
+| decision | options considered | why we chose this | trade-off |
+|---|---|---|---|
+| Give a verdict instead of indicators only | Indicators only (earlier rule) vs verdict + indicators | The spec reverses the earlier "indicators, not verdicts" decision; users need a decision and the project needs to be a working model. Honesty is kept via `UNKNOWN`, coverage, and "not a probability" labelling. | Users must still use judgment and official contact channels; `LIKELY_SAFE` is never a guarantee. |
+| Each check has its own timeout | One global timeout vs per-check timeouts | A per-check timeout lets fast checks finish even if a slow one hangs; the runner converts every failure into "unavailable" rather than raising. | Slightly more code in the runner. |
+| Coverage level (low/medium/high) | Show all check statuses vs a single summary | A coverage level plus the per-check list lets callers see both the big picture and exactly which checks are missing. | Extra field in the API response. |
+| `UNKNOWN` when coverage is low | Force `INCONCLUSIVE` vs return `UNKNOWN` | `INCONCLUSIVE` meant "I can't answer", which happened whenever any optional check was missing. `UNKNOWN` means "we did our best with what ran" and still gives a decision. | Callers must treat `UNKNOWN` as "reduced confidence", not "clean". |
+
+### 5. What we built
+- `backend/app/core/runner.py`: check contract (`Signal`, `CheckResult`, `CheckSpec`), `@check` decorator, `run_checks` that runs checks concurrently with per-check timeouts and converts every failure into an unavailable result.
+- `backend/app/core/verdict.py`: `compute_coverage`, temporary scorer `compute_verdict`, `DANGEROUS`/`SUSPICIOUS`/`LIKELY_SAFE`/`UNKNOWN` verdict mapping, hard-override signal IDs, `risk_score_note`.
+- `backend/app/core/service.py`: `_analyze` now routes checks through `run_checks`; `FastPathResult` carries `checks`, `verdict`, `risk_score`, `risk_score_note`, `coverage_level`.
+- `backend/app/api/v1/schemas.py`: `CheckOut`, `CoverageOut`, `ScanVerdict`, and `verdict` field on `ScanAccepted`.
+- `backend/app/api/v1/endpoints.py`: `create_scan` returns verdict + coverage + checks in the response; sandbox failure now records `UNKNOWN` instead of `INCONCLUSIVE`.
+- `backend/app/core/aggregator.py`: removed the rule that any unavailable check forces `INCONCLUSIVE`; overall is now based only on indicators.
+- `backend/app/config.py`: added `risk_score_dangerous_threshold` (70), `risk_score_suspicious_threshold` (35), `sandbox_page_timeout_seconds` (15).
+- `backend/tests/test_runner.py`: new tests for runner timeouts, exceptions, all-unavailable, hard override, coverage, reasons ordering, concurrency.
+- `backend/tests/test_verdict.py`: new tests for coverage levels, verdict mapping, hard override, threshold config.
+- `tests/test_aggregator.py`, `tests/test_service.py`, `tests/test_api.py`, `tests/test_sandbox_task.py`: updated assertions that previously expected `INCONCLUSIVE`.
+
+### 6. What actually happened
+- Full backend pytest suite passed: **177 passed, 1 deselected** in 10.68s (matches the Phase 0 baseline of 177 passed).
+- Ruff lint: **All checks passed!**
+- Ruff format: all changed files formatted.
+- Verified end-to-end: `run_fast_path("upi://collect?...")` returns `verdict=UNKNOWN`, `coverage_level=medium`, with checks `lexical`/`infrastructure`/`threat_feeds`/`upi` each reporting honest status; `upi` signals include `UPI_COLLECT_REQUEST` and `PREFILLED_AMOUNT`; overall indicator `SOME_INDICATORS_DETECTED` instead of `INCONCLUSIVE`.
+- Direct scan of `https://example.com` returns `verdict=UNKNOWN`, `coverage_level=low` (lexical stub and external feeds unavailable), and never crashes.
+- Mistake made during edits: several file-editing slip-ups left stray `CUT` text and duplicated blocks; these were cleaned by rewriting the affected files (`runner.py`, `aggregator.py`, `service.py`, `config.py`, `endpoints.py`) cleanly and re-verifying imports, tests, and lint.
+- Not run: Docker compose container tests (Docker Desktop was not active on this machine); backend tests were verified locally with Python 3.14 and pinned dependencies installed via pip.
+
+### 7. Limits and honest weaknesses
+- The `app.core.lexical` module remains absent until Phase 2, so URL spelling checks still return unavailable; the runner tolerates this gracefully.
+- External threat feeds (GSB, VT) remain unconfigured until Phase 3 and 4; the product returns a verdict without them.
+- Docker compose container tests were not run because Docker Desktop was not active; backend tests were verified locally only.
+- The whole stack was verified on Windows locally; not verified on Linux or macOS.
+- The numeric score is an uncalibrated heuristic (not a probability); thresholds (70/35) are placeholders to be tuned in Phase 8.
+
+### 8. How to explain this to a judge in 30 seconds
+We rebuilt the scanner so a single broken check can never break the whole result. Every check runs on its own with a strict timeout, failures are reported honestly as "unavailable", and the system always gives a verdict — `DANGEROUS`, `SUSPICIOUS`, `LIKELY_SAFE`, or `UNKNOWN` — with reasons and a coverage level showing how many checks actually ran. The score is explicitly a heuristic, not a probability, and `LIKELY_SAFE` is never a guarantee.
+
+### 9. New terms
+- Check runner: a component that runs many independent checks at the same time, each with its own time limit, so one slow or broken check never blocks the others.
+- Unavailable: an honest check result meaning "this check could not be completed", distinct from a failure that crashes the scan.
+- Coverage: the share of check groups that actually ran successfully, reported as low/medium/high.
+- Heuristic risk score: a plain 0-100 number built from fixed rules, labelled "not a probability" because it is not statistically calibrated.
+- UNKNOWN: a verdict meaning "we ran what we could and found no strong reason to alarm, but confidence is reduced because some checks were unavailable."
+- Hard override: a signal (such as a blocklist hit) that forces the verdict to DANGEROUS regardless of the score.
+

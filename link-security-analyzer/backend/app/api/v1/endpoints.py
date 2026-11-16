@@ -1,4 +1,3 @@
-
 """Scan submission, polling, and Redis fixed-window rate limiting."""
 
 import asyncio
@@ -16,10 +15,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.schemas import (
     AdvisoryReportResponse,
+    CoverageOut,
     FastPathSummary,
     ScanAccepted,
     ScanReport,
     ScanRequest,
+    ScanVerdict,
 )
 from app.config import get_settings
 from app.core.aggregator import AdvisoryPillar
@@ -65,7 +66,9 @@ async def _enforce_rate_limit(
     try:
         count = int(await client.eval(_RATE_LIMIT_SCRIPT, 1, key, 60))
     except (RedisError, ConnectionError) as error:
-        logger.warning("rate limiter unavailable (%s); failing open", type(error).__name__)
+        logger.warning(
+            "rate limiter unavailable (%s); failing open", type(error).__name__
+        )
         return
     if count > limit:
         retry_after = 60 - (now % 60)
@@ -187,8 +190,7 @@ async def create_scan(
                     )
                 ],
             ).model_dump(mode="json")
-            if job.final_advisory_status != "HIGH_RISK_INDICATORS_DETECTED":
-                job.final_advisory_status = "INCONCLUSIVE"
+            job.final_advisory_status = "UNKNOWN"
             job.completed_at = datetime.now(_UTC)
             await session.commit()
             raise HTTPException(
@@ -196,6 +198,22 @@ async def create_scan(
                 detail="The browser check could not be queued; the fast-path report was saved.",
             ) from error
 
+    coverage = CoverageOut(
+        completed=sorted({c.group for c in fast_result.checks if c.group}),
+        unavailable=[
+            {"group": c.group or c.name, "reason": c.reason or "unavailable"}
+            for c in fast_result.checks
+            if c.status != "ok"
+        ],
+        level=fast_result.coverage_level,
+    )
+    verdict = ScanVerdict(
+        verdict=fast_result.verdict,
+        risk_score=fast_result.risk_score,
+        risk_score_note=fast_result.risk_score_note,
+        coverage=coverage,
+        reasons=sorted({s.id for c in fast_result.checks for s in c.signals if s.id}),
+    )
     summary = FastPathSummary(
         payload_type=fast_result.classification.payload_type,
         domain=fast_result.domain,
@@ -211,6 +229,7 @@ async def create_scan(
         status=scan_status,
         fast_path_summary=summary,
         poll_url=poll_url,
+        verdict=verdict,
     )
 
 
@@ -267,6 +286,7 @@ async def _check_db_quick() -> bool:
 
 async def _check_redis_quick() -> bool:
     try:
+
         async def _run() -> None:
             client = redis.from_url(get_settings().redis_url)
             try:
@@ -344,7 +364,9 @@ async def get_health() -> dict[str, object]:
     )
     settings = get_settings()
     feeds_status = {
-        "google_safe_browsing": "configured" if bool(settings.gsb_api_key) else "unconfigured",
+        "google_safe_browsing": "configured"
+        if bool(settings.gsb_api_key)
+        else "unconfigured",
         "virustotal": "configured" if bool(settings.vt_api_key) else "unconfigured",
     }
     return {

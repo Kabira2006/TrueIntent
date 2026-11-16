@@ -65,7 +65,7 @@ def test_build_report_creates_three_pillars_and_uncalibrated_score() -> None:
     assert report.technical_url_analysis.status == "FLAGGED"
     assert report.visual_brand_analysis.status == "PENDING"
     assert report.transaction_context_analysis.status == "NOT_APPLICABLE"
-    assert report.overall_indicator == "INCONCLUSIVE"
+    assert report.overall_indicator == "SOME_INDICATORS_DETECTED"
     assert report.signal_vector["shannon_entropy"] == 3.25
     assert report.signal_vector["domain_age_days"] == 12
     assert report.signal_vector["subdomain_depth"] == 2
@@ -107,7 +107,7 @@ def test_unavailable_checks_create_inconclusive_report() -> None:
         payload_type="URL",
     )
     assert report.technical_url_analysis.status == "UNAVAILABLE"
-    assert report.overall_indicator == "INCONCLUSIVE"
+    assert report.overall_indicator == "SOME_INDICATORS_DETECTED"
     assert report.heuristic_score == 0
 
 

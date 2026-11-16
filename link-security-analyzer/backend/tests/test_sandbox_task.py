@@ -157,5 +157,5 @@ def test_failed_sandbox_preserves_fast_path_results(
     assert job.error_message == expected
     assert job.lexical_indicators == fast_path_technical
     assert job.sandbox_indicators["status"] == "UNAVAILABLE"
-    assert job.final_advisory_status == "INCONCLUSIVE"
+    assert job.final_advisory_status == "SOME_INDICATORS_DETECTED"
     assert job.completed_at is not None

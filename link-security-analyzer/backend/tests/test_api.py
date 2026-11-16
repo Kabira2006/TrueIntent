@@ -208,7 +208,7 @@ def test_queue_failure_marks_saved_scan_failed(
     assert job.completed_at is not None
     assert job.sandbox_indicators["status"] == "UNAVAILABLE"
     assert job.sandbox_indicators["indicators"][0]["code"] == "SANDBOX_UNAVAILABLE"
-    assert job.final_advisory_status == "INCONCLUSIVE"
+    assert job.final_advisory_status == "UNKNOWN"
 
 
 def test_get_scan_returns_persisted_three_pillar_report(
@@ -236,7 +236,7 @@ def test_get_scan_returns_persisted_three_pillar_report(
         report["advisory_report"]["transaction_context_analysis"]["status"]
         == "NOT_APPLICABLE"
     )
-    assert report["overall_indicator"] == "INCONCLUSIVE"
+    assert report["overall_indicator"] == "SOME_INDICATORS_DETECTED"
 
 
 def test_non_url_scan_completes_without_sandbox(

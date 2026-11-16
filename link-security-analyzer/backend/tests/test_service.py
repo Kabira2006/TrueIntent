@@ -91,7 +91,7 @@ async def test_run_fast_path_returns_report_and_model_features(
     assert isinstance(result, FastPathResult)
     assert result.classification.payload_type == "URL"
     assert result.domain == "example.com"
-    assert result.advisory_report.overall_indicator == "INCONCLUSIVE"
+    assert result.advisory_report.overall_indicator == "NO_INDICATORS_DETECTED"
     assert result.advisory_report.signal_vector["domain_age_days"] == 300
 
 
@@ -132,7 +132,7 @@ async def test_fast_path_timeout_degrades_slow_check_to_unavailable(
         settings=_settings(fast_path_budget_seconds=0.01),
     )
     assert result.advisory_report.technical_url_analysis.status == "UNAVAILABLE"
-    assert result.advisory_report.overall_indicator == "INCONCLUSIVE"
+    assert result.advisory_report.overall_indicator == "NO_INDICATORS_DETECTED"
 
 
 async def test_failed_check_exception_does_not_fail_the_scan(
@@ -161,7 +161,7 @@ async def test_failed_check_exception_does_not_fail_the_scan(
         settings=_settings(),
     )
     assert result.advisory_report.technical_url_analysis.status == "UNAVAILABLE"
-    assert result.advisory_report.overall_indicator == "INCONCLUSIVE"
+    assert result.advisory_report.overall_indicator == "NO_INDICATORS_DETECTED"
 
 
 async def test_input_classification_and_embedded_upi_routing(
@@ -224,7 +224,7 @@ async def test_missing_upi_runtime_config_is_explicitly_unavailable(
     pillar = result.advisory_report.transaction_context_analysis
     assert pillar.status == "UNAVAILABLE"
     assert pillar.indicators[0].code == "CHECK_UNAVAILABLE"
-    assert result.advisory_report.overall_indicator == "INCONCLUSIVE"
+    assert result.advisory_report.overall_indicator == "SOME_INDICATORS_DETECTED"
 
 
 async def test_cache_outage_does_not_break_fast_path(

@@ -28,6 +28,40 @@ class FastPathSummary(BaseModel):
     threat_feed_matches: int
 
 
+class CheckOut(BaseModel):
+    """One executed check with honest status and timing."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    status: Literal["ok", "unavailable", "skipped"]
+    group: str | None = None
+    took_ms: int
+    reason: str | None = None
+
+
+class CoverageOut(BaseModel):
+    """Share of check groups that actually ran."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    completed: list[str]
+    unavailable: list[dict[str, str]]
+    level: Literal["low", "medium", "high"]
+
+
+class ScanVerdict(BaseModel):
+    """Heuristic verdict plus honesty metadata."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    verdict: Literal["DANGEROUS", "SUSPICIOUS", "LIKELY_SAFE", "UNKNOWN"]
+    risk_score: int
+    risk_score_note: str
+    coverage: CoverageOut
+    reasons: list[str]
+
+
 class ScanAccepted(BaseModel):
     """Accepted scan identifier and polling location."""
 
@@ -37,6 +71,7 @@ class ScanAccepted(BaseModel):
     status: Literal["FAST_PATH_DONE", "COMPLETED"]
     fast_path_summary: FastPathSummary
     poll_url: str
+    verdict: ScanVerdict
 
 
 class AdvisoryReportResponse(BaseModel):
