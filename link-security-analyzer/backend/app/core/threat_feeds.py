@@ -315,3 +315,125 @@ def _unavailable(feed: str) -> FeedLookup:
             )
         ],
     )
+
+
+# ----------------------------------------------------------------------------------
+# Runner check wrappers
+# ----------------------------------------------------------------------------------
+
+from app.core.runner import CheckResult, Signal, check
+
+
+@check(name="google_safe_browsing", timeout_s=3.0, group="external_reputation")
+async def check_google_safe_browsing(ctx: Any) -> CheckResult:
+    """Check URL against Google Safe Browsing API.
+
+    Signals:
+        GSB_MALWARE: URL flagged as malware (50 points, critical)
+        GSB_SOCIAL_ENGINEERING: URL flagged as social engineering/phishing (50 points, critical)
+        GSB_UNWANTED_SOFTWARE: URL flagged as unwanted software (40 points, critical)
+        THREAT_FEED_UNAVAILABLE: API unavailable or no key configured (0 points, info)
+
+    Returns:
+        CheckResult with GSB lookup status
+    """
+    url_obj = getattr(ctx, "url", None)
+    if not url_obj:
+        return CheckResult(
+            name="google_safe_browsing",
+            status="skipped",
+            group="external_reputation",
+            reason="no_url",
+        )
+
+    full_url = str(url_obj)
+
+    # Get GSB lookup
+    gsb_result = await lookup_google_safe_browsing(
+        full_url,
+        redis_client=getattr(ctx, "redis", None),
+        http_client=getattr(ctx, "http_client", None),
+    )
+
+    detail: dict[str, Any] = {
+        "url": full_url,
+        "status": gsb_result.status,
+    }
+
+    # Convert indicators to signals
+    signals = [
+        Signal(
+            id=ind.code,
+            points=ind.points,
+            severity=ind.severity,
+            explain=ind.message,
+            evidence=ind.evidence,
+        )
+        for ind in gsb_result.indicators
+    ]
+
+    return CheckResult(
+        name="google_safe_browsing",
+        status="ok",
+        group="external_reputation",
+        signals=signals,
+        detail=detail,
+    )
+
+
+@check(name="virustotal", timeout_s=3.0, group="external_reputation")
+async def check_virustotal(ctx: Any) -> CheckResult:
+    """Check URL against VirusTotal API.
+
+    Signals:
+        VT_MALICIOUS_GT_3: 4+ vendors flag URL as malicious (40 points, critical)
+        VT_MALICIOUS_1_3: 1-3 vendors flag URL as malicious (20 points, high)
+        THREAT_FEED_UNAVAILABLE: API unavailable or no key/quota (0 points, info)
+
+    Returns:
+        CheckResult with VirusTotal lookup status
+    """
+    url_obj = getattr(ctx, "url", None)
+    if not url_obj:
+        return CheckResult(
+            name="virustotal",
+            status="skipped",
+            group="external_reputation",
+            reason="no_url",
+        )
+
+    full_url = str(url_obj)
+
+    # Get VirusTotal lookup
+    vt_result = await lookup_virustotal(
+        full_url,
+        redis_client=getattr(ctx, "redis", None),
+        http_client=getattr(ctx, "http_client", None),
+    )
+
+    detail: dict[str, Any] = {
+        "url": full_url,
+        "status": vt_result.status,
+        "malicious_count": vt_result.malicious_count,
+        "total_count": vt_result.total_count,
+    }
+
+    # Convert indicators to signals
+    signals = [
+        Signal(
+            id=ind.code,
+            points=ind.points,
+            severity=ind.severity,
+            explain=ind.message,
+            evidence=ind.evidence,
+        )
+        for ind in vt_result.indicators
+    ]
+
+    return CheckResult(
+        name="virustotal",
+        status="ok",
+        group="external_reputation",
+        signals=signals,
+        detail=detail,
+    )
