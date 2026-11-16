@@ -123,3 +123,58 @@ class ScanJob(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class FeedMeta(Base):
+    """Metadata about downloaded reputation feeds."""
+
+    __tablename__ = "feed_meta"
+
+    source: Mapped[str] = mapped_column(String(64), primary_key=True, nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    row_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"), default=0)
+    license_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    detail: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class TrancoRank(Base):
+    """Popularity rank from Tranco top-1M list."""
+
+    __tablename__ = "tranco_rank"
+    __table_args__ = (Index("idx_tranco_rank_rank", "rank"),)
+
+    registrable_domain: Mapped[str] = mapped_column(String(255), primary_key=True, nullable=False)
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class BlocklistEntry(Base):
+    """One known-bad URL from phishing or malware feeds."""
+
+    __tablename__ = "blocklist_entries"
+    __table_args__ = (
+        Index("idx_blocklist_url_norm", "url_norm", postgresql_using="hash"),
+        Index("idx_blocklist_domain", "registrable_domain"),
+        Index("idx_blocklist_source", "source"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+        default=uuid.uuid4,
+    )
+    url_norm: Mapped[str] = mapped_column(Text, nullable=False)
+    registrable_domain: Mapped[str] = mapped_column(String(255), nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    threat_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )

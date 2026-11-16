@@ -356,6 +356,9 @@ def _get_git_commit() -> str | None:
 @router.get("/health", name="health")
 async def get_health() -> dict[str, object]:
     """Rich health check reporting db, redis, worker, playwright, and app version."""
+    from app.core.reputation import get_feed_status
+    from app.db.session import get_async_session
+    
     db_ok, redis_ok, worker_ok, playwright_ok = await asyncio.gather(
         _check_db_quick(),
         _check_redis_quick(),
@@ -363,11 +366,21 @@ async def get_health() -> dict[str, object]:
         _check_playwright_quick(),
     )
     settings = get_settings()
+    
+    # Get local feed status
+    reputation_feeds: dict[str, Any] = {}
+    try:
+        async with get_async_session() as session:
+            reputation_feeds = await get_feed_status(session)
+    except Exception:  # noqa: BLE001
+        reputation_feeds = {"error": "could_not_fetch"}
+    
     feeds_status = {
         "google_safe_browsing": "configured"
         if bool(settings.gsb_api_key)
         else "unconfigured",
         "virustotal": "configured" if bool(settings.vt_api_key) else "unconfigured",
+        "local_feeds": reputation_feeds,
     }
     return {
         "status": "ok" if (db_ok and redis_ok) else "degraded",
@@ -379,6 +392,20 @@ async def get_health() -> dict[str, object]:
         "playwright_launch": playwright_ok,
         "threat_feeds": feeds_status,
     }
+
+
+@app.get("/api/v1/feeds/status", tags=["health"])
+async def get_feeds_status_endpoint() -> dict[str, Any]:
+    """Get detailed status of all reputation feeds (Tranco, OpenPhish, URLhaus)."""
+    from app.core.reputation import get_feed_status
+    from app.db.session import get_async_session
+    
+    try:
+        async with get_async_session() as session:
+            feeds = await get_feed_status(session)
+            return {"feeds": feeds, "status": "ok"}
+    except Exception as exc:  # noqa: BLE001
+        return {"feeds": {}, "status": "error", "error": str(exc)}
 
 
 def _pillar_from_storage(value: object) -> AdvisoryPillar:

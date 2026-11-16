@@ -25,6 +25,7 @@ class Settings(BaseSettings):
 
     gsb_api_key: str = Field(default="")
     vt_api_key: str = Field(default="")
+    abusech_auth_key: str = Field(default="")
 
     whois_timeout_seconds: float = Field(default=3.0)
     dns_timeout_seconds: float = Field(default=2.0)
