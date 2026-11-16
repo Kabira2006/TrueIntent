@@ -12,9 +12,12 @@ from pydantic import BaseModel, ConfigDict
 
 from app.core.models import Indicator, UpiResult
 
-_VPA_PATTERN = re.compile(r"^[A-Za-z0-9.\-_]{2,256}@[A-Za-z]{2,64}$")
+_VPA_PATTERN = re.compile(r"^[A-Za-z0-9.\-]{2,256}@[A-Za-z]{2,64}$")
 _SUSPICIOUS_NOTE_WORDS = re.compile(
     r"\b(?:urgent|refund|kyc|verify|expire|blocked)\b", re.IGNORECASE
+)
+_REFUND_REWARD_NOTE_WORDS = re.compile(
+    r"\b(?:refund|cashback|reward|prize|winning|won)\b", re.IGNORECASE
 )
 _UPI_CONFIG_PATH = Path(__file__).resolve().parents[2] / "data" / "upi_handles.json"
 _FEATURE_NAMES = (
@@ -160,6 +163,15 @@ def analyze_upi(payload: str) -> UpiResult:
                 code="SUSPICIOUS_NOTE_TEXT",
                 severity="medium",
                 message="The payment note contains urgency, refund, or account-verification wording.",
+                evidence={"note": note},
+            )
+        )
+    if note and _REFUND_REWARD_NOTE_WORDS.search(note):
+        indicators.append(
+            Indicator(
+                code="UPI_REFUND_NOTE",
+                severity="medium",
+                message="The payment note describes a refund, reward, or prize \u2014 a common disguise for a collect request.",
                 evidence={"note": note},
             )
         )

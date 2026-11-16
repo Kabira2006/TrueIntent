@@ -1,0 +1,184 @@
+# Starter brand reference list (Phase 2).
+#
+# Schema: id, display_name, keywords[], official_domains[], login_urls[], notes.
+#
+# NOTE (verification status): These official domains are taken from the
+# project spec Appendix A. They have NOT been independently verified against
+# the live brand homepages in this Phase 2 turn (no network fetch was
+# performed). Per spec 2.2, mark verified: false where unverified and list
+# them in the journal section 7.
+brands:
+  - id: sbi
+    display_name: State Bank of India
+    keywords: ["sbi", "state bank", "state bank of india"]
+    official_domains: ["sbi.co.in", "onlinesbi.sbi"]
+    login_urls: ["https://onlinesbi.sbi"]
+    notes: "Official domain per spec Appendix A; not live-verified in Phase 2."
+  - id: hdfcbank
+    display_name: HDFC Bank
+    keywords: ["hdfc", "hdfc bank", "hdfcbank"]
+    official_domains: ["hdfcbank.com"]
+    login_urls: ["https://netbanking.hdfcbank.com"]
+    notes: "Official domain per spec Appendix A; not live-verified in Phase 2."
+  - id: icicibank
+    display_name: ICICI Bank
+    keywords: ["icici", "icici bank", "icicibank"]
+    official_domains: ["icicibank.com"]
+    login_urls: ["https://www.icicibank.com"]
+    notes: "Official domain per spec Appendix A; not live-verified in Phase 2."
+  - id: axisbank
+    display_name: Axis Bank
+    keywords: ["axis", "axis bank", "axisbank"]
+    official_domains: ["axisbank.com"]
+    login_urls: ["https://www.axisbank.com"]
+    notes: "Official domain per spec Appendix A; not live-verified in Phase 2."
+  - id: kotak
+    display_name: Kotak Mahindra Bank
+    keywords: ["kotak", "kotak mahindra", "kotak bank"]
+    official_domains: ["kotak.com"]
+    login_urls: ["https://www.kotak.com"]
+    notes: "Official domain per spec Appendix A; not live-verified in Phase 2."
+  - id: pnb
+    display_name: Punjab National Bank
+    keywords: ["pnb", "punjab national bank", "pnbindia"]
+    official_domains: ["pnbindia.in"]
+    login_urls: ["https://www.pnbindia.in"]
+    notes: "Official domain per spec Appendix A; not live-verified in Phase 2."
+  - id: bankofbaroda
+    display_name: Bank of Baroda
+    keywords: ["bank of baroda", "bob", "bankofbaroda"]
+    official_domains: ["bankofbaroda.in"]
+    login_urls: ["https://www.bankofbaroda.in"]
+    notes: "Official domain per spec Appendix A; not live-verified in Phase 2."
+  - id: canarabank
+    display_name: Canara Bank
+    keywords: ["canara", "canara bank", "canarabank"]
+    official_domains: ["canarabank.com"]
+    login_urls: ["https://www.canarabank.com"]
+    notes: "Official domain per spec Appendix A; not live-verified in Phase 2."
+  - id: paytm
+    display_name: Paytm
+    keywords: ["paytm", "paytm bank", "paytm wallet"]
+    official_domains: ["paytm.com"]
+    login_urls: ["https://paytm.com"]
+    notes: "Official domain per spec Appendix A; not live-verified in Phase 2."
+  - id: phonepe
+    display_name: PhonePe
+    keywords: ["phonepe", "phone pe"]
+    official_domains: ["phonepe.com"]
+    login_urls: ["https://www.phonepe.com"]
+    notes: "Official domain per spec Appendix A; not live-verified in Phase 2."
+  - id: google
+    display_name: Google / Google Pay
+    keywords: ["google", "google pay", "gpay"]
+    official_domains: ["google.com", "pay.google.com"]
+    login_urls: ["https://accounts.google.com"]
+    notes: "Official domain per spec Appendix A; not live-verified in Phase 2."
+  - id: npci
+    display_name: NPCI / BHIM UPI
+    keywords: ["npci", "bhim", "upi", "national payments corporation"]
+    official_domains: ["npci.org.in", "bhimupi.org.in"]
+    login_urls: ["https://www.npci.org.in"]
+    notes: "Official domain per spec Appendix A; not live-verified in Phase 2."
+  - id: amazon
+    display_name: Amazon
+    keywords: ["amazon", "amazon.in", "amazon pay"]
+    official_domains: ["amazon.in", "amazon.com"]
+    login_urls: ["https://www.amazon.in"]
+    notes: "Official domain per spec Appendix A; not live-verified in Phase 2."
+  - id: flipkart
+    display_name: Flipkart
+    keywords: ["flipkart"]
+    official_domains: ["flipkart.com"]
+    login_urls: ["https://www.flipkart.com"]
+    notes: "Official domain per spec Appendix A; not live-verified in Phase 2."
+  - id: microsoft
+    display_name: Microsoft
+    keywords: ["microsoft", "windows", "outlook", "office 365"]
+    official_domains: ["microsoft.com", "live.com"]
+    login_urls: ["https://login.microsoft.com"]
+    notes: "Official domain per spec Appendix A; not live-verified in Phase 2."
+  - id: apple
+    display_name: Apple
+    keywords: ["apple", "icloud", "apple id"]
+    official_domains: ["apple.com"]
+    login_urls: ["https://apple.com"]
+    notes: "Official domain per spec Appendix A; not live-verified in Phase 2."
+  - id: meta
+    display_name: Meta (Facebook / Instagram / WhatsApp)
+    keywords: ["facebook", "instagram", "whatsapp", "meta"]
+    official_domains: ["facebook.com", "instagram.com", "whatsapp.com"]
+    login_urls: ["https://www.facebook.com"]
+    notes: "Official domain per spec Appendix A; not live-verified in Phase 2."
+  - id: netflix
+    display_name: Netflix
+    keywords: ["netflix"]
+    official_domains: ["netflix.com"]
+    login_urls: ["https://www.netflix.com"]
+    notes: "Official domain per spec Appendix A; not live-verified in Phase 2."
+  - id: paypal
+    display_name: PayPal
+    keywords: ["paypal"]
+    official_domains: ["paypal.com"]
+    login_urls: ["https://www.paypal.com"]
+    notes: "Official domain per spec Appendix A; not live-verified in Phase 2."
+  - id: indiapost
+    display_name: India Post
+    keywords: ["indiapost", "india post"]
+    official_domains: ["indiapost.gov.in"]
+    login_urls: ["https://www.indiapost.gov.in"]
+    notes: "Official domain per spec Appendix A; not live-verified in Phase 2."
+  - id: incometax
+    display_name: Income Tax Department
+    keywords: ["incometax", "income tax", "it department"]
+    official_domains: ["incometax.gov.in"]
+    login_urls: ["https://www.incometax.gov.in"]
+    notes: "Official domain per spec Appendix A; not live-verified in Phase 2."
+  - id: uidai
+    display_name: UIDAI / Aadhaar
+    keywords: ["uidai", "aadhaar"]
+    official_domains: ["uidai.gov.in"]
+    login_urls: ["https://uidai.gov.in"]
+    notes: "Official domain per spec Appendix A; not live-verified in Phase 2."
+  - id: digilocker
+    display_name: DigiLocker
+    keywords: ["digilocker", "digi locker"]
+    official_domains: ["digilocker.gov.in"]
+    login_urls: ["https://digilocker.gov.in"]
+    notes: "Official domain per spec Appendix A; not live-verified in Phase 2."
+  - id: irctc
+    display_name: IRCTC
+    keywords: ["irctc", "indian railway catering"]
+    official_domains: ["irctc.co.in"]
+    login_urls: ["https://www.irctc.co.in"]
+    notes: "Official domain per spec Appendix A; not live-verified in Phase 2."
+  - id: jio
+    display_name: Jio
+    keywords: ["jio", "reliance jio"]
+    official_domains: ["jio.com"]
+    login_urls: ["https://www.jio.com"]
+    notes: "Official domain per spec Appendix A; not live-verified in Phase 2."
+  - id: airtel
+    display_name: Airtel
+    keywords: ["airtel", "bharti airtel"]
+    official_domains: ["airtel.in"]
+    login_urls: ["https://www.airtel.in"]
+    notes: "Official domain per spec Appendix A; not live-verified in Phase 2."
+  - id: linkedin
+    display_name: LinkedIn
+    keywords: ["linkedin"]
+    official_domains: ["linkedin.com"]
+    login_urls: ["https://www.linkedin.com"]
+    notes: "Official domain per spec Appendix A; not live-verified in Phase 2."
+  - id: telegram
+    display_name: Telegram
+    keywords: ["telegram", "tg"]
+    official_domains: ["telegram.org"]
+    login_urls: ["https://web.telegram.org"]
+    notes: "Official domain per spec Appendix A; not live-verified in Phase 2."
+  - id: nhai
+    display_name: FASTag / NHAI
+    keywords: ["fastag", "nhai", "indian highways authority"]
+    official_domains: ["ihmcl.co.in", "nhai.gov.in"]
+    login_urls: ["https://www.ihmcl.co.in"]
+    notes: "Official domain per spec Appendix A; not live-verified in Phase 2."

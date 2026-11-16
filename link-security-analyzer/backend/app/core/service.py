@@ -12,15 +12,15 @@ from typing import Any, Literal, TypeVar
 from urllib.parse import urlsplit
 
 import redis.asyncio as redis
-import tldextract
 from pydantic import BaseModel, ConfigDict
 from redis.exceptions import RedisError
 
 from app.config import Settings, get_settings
 from app.core.aggregator import AdvisoryReport, build_report
+from app.core.brands import BrandCatalog, load_brands
 from app.core.infrastructure import DnsInfo, DomainInfo, get_domain_info, resolve_dns
-from app.core.input_router import classify_input
 from app.core.models import Indicator, InputClassification
+from app.core.router import RouteResult, classify_and_route
 from app.core.runner import CheckGroup, CheckResult, CheckSpec, run_checks
 from app.core.threat_feeds import FeedLookup, ThreatFeedResult, check_threat_feeds
 from app.core.upi import UpiResult, analyze_upi
@@ -28,8 +28,20 @@ from app.core.verdict import compute_coverage, compute_verdict
 
 logger = logging.getLogger(__name__)
 _CACHE_TTL_SECONDS = 60 * 60
-_SUFFIX_EXTRACTOR = tldextract.TLDExtract(suffix_list_urls=())
 _ResultType = TypeVar("_ResultType")
+
+_BRAND_CATALOG: BrandCatalog | None = None
+
+
+def _brand_catalog() -> BrandCatalog:
+    global _BRAND_CATALOG
+    if _BRAND_CATALOG is None:
+        try:
+            _BRAND_CATALOG = load_brands()
+        except Exception as error:  # noqa: BLE001 - brand file optional
+            logger.warning("brand catalogue unavailable (%s)", type(error).__name__)
+            _BRAND_CATALOG = BrandCatalog()
+    return _BRAND_CATALOG
 
 
 class InfrastructureBundle(BaseModel):
@@ -72,9 +84,15 @@ async def run_fast_path(
 ) -> FastPathResult:
     """Classify input, run bounded checks concurrently, and cache the result."""
     current_settings = settings or get_settings()
-    classification = classify_input(raw_input)
-    analysis_payload = _analysis_payload(classification)
-    cache_key = _cache_key(classification.normalized_payload)
+    routed = classify_and_route(raw_input)
+    classification = InputClassification(
+        payload_type=routed.payload_type,  # type: ignore[arg-type]
+        normalized_payload=routed.normalized_payload,
+        embedded_payload=routed.embedded_payload,
+        recognized=routed.recognized,
+    )
+    analysis_payload = routed.embedded_payload or routed.normalized_payload
+    cache_key = _cache_key(routed.normalized_payload)
     deadline = (
         asyncio.get_running_loop().time() + current_settings.fast_path_budget_seconds
     )
@@ -95,6 +113,7 @@ async def run_fast_path(
             return cached_result
 
         result = await _analyze(
+            routed,
             classification,
             analysis_payload,
             cache,
@@ -118,6 +137,7 @@ async def run_fast_path(
 
 
 async def _analyze(
+    routed: RouteResult,
     classification: InputClassification,
     payload: str,
     cache: redis.Redis,
@@ -127,7 +147,7 @@ async def _analyze(
     budget_seconds: float,
 ) -> FastPathResult:
     """Run bounded checks through the runner and compute verdict + coverage."""
-    domain = _domain_from_web_url(payload)
+    domain = routed.registrable_domain
     is_web_payload = classification.payload_type == "URL" or (
         classification.payload_type == "QR_TEXT"
         and payload.lower().startswith(("http://", "https://"))
@@ -141,16 +161,18 @@ async def _analyze(
         or (is_web_payload and _has_upi_query(payload))
     )
 
-    async def lexical_check(ctx: Any) -> Any:
-        return await _run_lexical(ctx)
+    catalog = _brand_catalog()
 
-    async def infra_check(ctx: Any) -> Any:
+    async def lexical_check(_ctx: Any) -> Any:
+        return await _run_lexical(payload)
+
+    async def infra_check(_ctx: Any) -> Any:
         return await _run_infrastructure(domain, cache, settings, domain_repository)
 
-    async def feeds_check(ctx: Any) -> Any:
+    async def feeds_check(_ctx: Any) -> Any:
         return await _run_feeds(payload, cache, settings)
 
-    async def upi_check(ctx: Any) -> Any:
+    async def upi_check(_ctx: Any) -> Any:
         return await _run_upi(payload)
 
     named_checks: list[tuple[str, Callable[[Any], Any], CheckGroup]] = [
@@ -194,7 +216,7 @@ async def _analyze(
     return FastPathResult(
         classification=classification,
         analysis_payload=payload,
-        domain=domain,
+        domain=routed.host.raw if routed.host else None,
         is_punycode=is_punycode,
         shannon_entropy=entropy,
         domain_age_days=_domain_age(check_results["infrastructure"]),
@@ -209,6 +231,7 @@ async def _analyze(
 
 
 async def _run_lexical(payload: str) -> Any:
+    """Kept for backward compatibility with existing tests that monkeypatch it."""
     try:
         module = importlib.import_module("app.core.lexical")
         checker = module.analyze_url
@@ -387,9 +410,7 @@ def _domain_from_web_url(payload: str) -> str | None:
         return None
     if not host:
         return None
-    extracted = _SUFFIX_EXTRACTOR(host)
-    registered_domain = extracted.top_domain_under_public_suffix
-    return registered_domain or host
+    return host.lower()
 
 
 def _analysis_payload(classification: InputClassification) -> str:
