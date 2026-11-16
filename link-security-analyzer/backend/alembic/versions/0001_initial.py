@@ -1,3 +1,4 @@
+
 """initial schema: domain_records, brand_references, scan_jobs
 
 Revision ID: 0001_initial

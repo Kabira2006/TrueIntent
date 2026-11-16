@@ -96,9 +96,13 @@ async def run_fast_path(
             budget_seconds=remaining_budget,
         )
         try:
-            await _wait_for_remaining(_write_cache(cache, cache_key, result), deadline)
+            await _wait_for_remaining(
+                _write_cache(cache, cache_key, result), deadline
+            )
         except TimeoutError:
             logger.info("fast-path cache write exceeded the remaining time budget")
+        except Exception:  # noqa: BLE001 - non-critical cache write
+            logger.info("fast-path cache write failed")
         return result
     finally:
         if owned_redis:

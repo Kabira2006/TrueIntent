@@ -1,0 +1,82 @@
+{
+  "classification": {
+    "payload_type": "UPI_DEEP_LINK",
+    "normalized_payload": "upi://collect?pa=test@ybl&am=5000&tn=refund",
+    "embedded_payload": null,
+    "recognized": true
+  },
+  "analysis_payload": "upi://collect?pa=test@ybl&am=5000&tn=refund",
+  "domain": "collect",
+  "is_punycode": false,
+  "shannon_entropy": 0.0,
+  "domain_age_days": null,
+  "threat_feed_matches": 0,
+  "advisory_report": {
+    "technical_url_analysis": {
+      "status": "NOT_APPLICABLE",
+      "indicators": []
+    },
+    "visual_brand_analysis": {
+      "status": "NOT_APPLICABLE",
+      "indicators": []
+    },
+    "transaction_context_analysis": {
+      "status": "FLAGGED",
+      "indicators": [
+        {
+          "code": "UPI_COLLECT_REQUEST",
+          "severity": "medium",
+          "message": "This link uses a collect-style request, which asks the recipient to pay; scammers may disguise one as a refund. You never need a PIN to receive money.",
+          "evidence": {
+            "action": "collect"
+          }
+        },
+        {
+          "code": "PREFILLED_AMOUNT",
+          "severity": "medium",
+          "message": "The link contains a prefilled payment amount.",
+          "evidence": {
+            "amount": "5000",
+            "amount_value": 5000.0
+          }
+        },
+        {
+          "code": "MISSING_TRANSACTION_REF",
+          "severity": "info",
+          "message": "The link does not include a transaction reference.",
+          "evidence": {
+            "transaction_ref_present": false
+          }
+        },
+        {
+          "code": "SUSPICIOUS_NOTE_TEXT",
+          "severity": "medium",
+          "message": "The payment note contains urgency, refund, or account-verification wording.",
+          "evidence": {
+            "note": "refund"
+          }
+        }
+      ]
+    },
+    "overall_indicator": "SOME_INDICATORS_DETECTED",
+    "signal_vector": {
+      "shannon_entropy": 0.0,
+      "domain_age_days": -1.0,
+      "subdomain_depth": 0,
+      "is_punycode": false,
+      "gsb_match_count": 0,
+      "vt_malicious_count": 0,
+      "upi_collect_request": 1,
+      "upi_prefilled_amount": 1,
+      "payload_is_url": 0,
+      "payload_is_upi": 1,
+      "payload_is_qr_text": 0,
+      "indicator_upi_collect_request": 1,
+      "indicator_prefilled_amount": 1,
+      "indicator_missing_transaction_ref": 1,
+      "indicator_suspicious_note_text": 1,
+      "infrastructure_domain_age_days": -1.0
+    },
+    "heuristic_score": 0.45999999999999996
+  }
+}

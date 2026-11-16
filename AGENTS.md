@@ -72,5 +72,42 @@ Date: YYYY-MM-DD | Commit message: chunk-N: <title>
 5. If tests fail: still write the journal chapter, mark its title "(INCOMPLETE)", commit and push to a branch named `wip/chunk-N-<slug>` instead of main, and say so clearly.
 6. If a push is rejected, run `git pull --rebase origin main` once and retry. If it still fails, STOP and report the exact error. If authentication fails, tell me what is needed. Never put tokens in files or in the remote URL.
 
+## Rebuild Rules
+
+REBUILD RULES (apply to every phase)
+
+R1. Read first. At the start of every phase read: AGENTS.md, docs/LINK_ANALYZER_PROJECT_SPEC.md, the last two chapters of the project journal, and docs/DIAGNOSIS.md (once it exists). Do not redesign anything the spec already decides. If you believe the spec is wrong, say so in the journal and ask; do not silently deviate.
+
+R2. Honesty over appearance. Never fake a result, never hard-code expected outputs to make a test pass, never claim something ran if it did not. If something could not be run (no Docker, no network, no API key), write exactly that in the journal ("not run: reason"). Numbers in documents must come from a script output that is committed.
+
+R3. One phase at a time. Do only the current phase. Do not start the next one. Small, readable commits are fine inside a phase; the phase ends with the Closeout.
+
+R4. Resilience principle. Every external dependency (network, API, file, browser) is wrapped with a timeout and returns a structured "unavailable" result instead of raising into the scan. A single failing check must never make the whole scan fail or become "Inconclusive".
+
+R5. Security principle. User links are hostile. All outbound requests go through netguard. Never enter data into pages. Never log secrets or full query strings. Never commit .env, API keys, feed dumps, or screenshots. Add or keep .gitignore entries.
+
+R6. Tests. Write tests with the code. Before closeout run the full backend test suite and the linter (ruff) and report the real counts. Do not delete or weaken existing tests; if a test must change, explain why in the journal.
+
+R7. Backward compatibility. Keep existing endpoints working unless the phase says otherwise. Add fields; do not rename existing ones silently.
+
+R8. Environment. Python dependencies go in the project's existing dependency file with pinned versions. Everything must run through the existing docker compose. Document every new env var in .env.example (placeholders only).
+
+R9. PHASE CLOSEOUT PROTOCOL (mandatory, last step of every phase):
+  a) Run: tests, ruff, and the phase's Acceptance commands. Capture the real outputs.
+  b) APPEND one chapter to the end of the project journal (find it: docs/PROJECT_JOURNAL.md; if elsewhere, use the existing one; never create a second journal; never rewrite earlier chapters except to add the new chapter's link to the Table of Contents). Chapter heading: "## Chapter R<phase number>: <title>" then a line "Date: <YYYY-MM-DD> | Commit message: <message>". Use exactly these sections, in this order, same style as earlier chapters (plain words first, jargon defined):
+     1. In one minute
+     2. Why we did this
+     3. How it works (include a mermaid diagram when the phase changes the flow, and a one-line caption starting with "Notice")
+     4. Decisions and reasoning (table: decision | options considered | why we chose this | trade-off)
+     5. What we built (files created/changed, one line each)
+     6. What actually happened (real test counts, real command outputs summarized, mistakes made and how they were fixed, anything NOT run and why)
+     7. Limits and honest weaknesses
+     8. How to explain this to a judge in 30 seconds
+     9. New terms
+     Every chapter must explicitly answer: WHAT was done, WHY, and HOW.
+  c) Git: work on branch rebuild/phase-<N>-<short-name>. Commit with message "phase-<N>: <summary>". Then: git push -u origin <branch>; merge into main with --no-ff; git push origin main; create tag phase-<N>-done and push it (git push origin phase-<N>-done).
+  d) If push fails (no remote, auth), do NOT try to store credentials or tokens. Stop, print the exact commands the human must run, and record "push pending" in the journal.
+  e) End your final message with: a 5-line summary, the test counts, the commit hash, the tag, and "NEXT PHASE: <N+1>" (do not start it).
+
 ## Skills
 (If this section already exists, keep it as is.)

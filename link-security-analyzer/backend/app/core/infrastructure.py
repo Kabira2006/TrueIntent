@@ -128,6 +128,11 @@ async def get_domain_info(
                 "domain registration lookup unavailable (%s)", type(error).__name__
             )
             return _unknown_domain_info()
+        except Exception as error:  # noqa: BLE001 - fallback gracefully on any registry lookup issue
+            logger.warning(
+                "unexpected error during domain registration lookup (%s)", type(error).__name__
+            )
+            return _unknown_domain_info()
         finally:
             if owned_http:
                 await client.aclose()
@@ -160,6 +165,9 @@ async def resolve_dns(
         return _dns_unavailable("The domain did not pass the public-target check.")
     except (TimeoutError, OSError, dns.exception.DNSException, ValueError):
         logger.info("domain public-target check unavailable")
+        return _dns_unavailable("The domain public-target check could not complete.")
+    except Exception as error:  # noqa: BLE001 - fallback gracefully on any target check error
+        logger.warning("unexpected error during domain public-target check (%s)", type(error).__name__)
         return _dns_unavailable("The domain public-target check could not complete.")
 
     dns_resolver = resolver or dns.asyncresolver.Resolver()
@@ -278,7 +286,12 @@ async def _rdap_then_whois(
             timeout=max(1, int(settings.whois_timeout_seconds)),
         )
         parser_output = whois_result.parser_output
-        registered_at = _parse_datetime(parser_output.get("creation_date"))
+        raw_creation_date = (
+            parser_output.get("creation_date")
+            or parser_output.get("created")
+            or parser_output.get("created_date")
+        )
+        registered_at = _parse_datetime(raw_creation_date)
         registrar = _string_value(parser_output.get("registrar"))
         record = _RdapRecord(registered_at=registered_at, registrar=registrar)
         if registered_at is not None:

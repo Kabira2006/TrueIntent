@@ -67,6 +67,22 @@ def _sample_fast_result(payload_type: str = "URL") -> FastPathResult:
             "vt_available": True,
         },
     )
+    upi = (
+        {
+            "status": "AVAILABLE",
+            "indicators": [
+                Indicator(
+                    code="PREFILLED_AMOUNT",
+                    severity="low",
+                    message="The link contains a prefilled payment amount.",
+                    evidence={"amount": "12.00", "amount_value": 12.0},
+                )
+            ],
+            "features": {"upi_prefilled_amount": 1},
+        }
+        if payload_type == "UPI_DEEP_LINK"
+        else None
+    )
     report = build_report(
         {
             "status": "UNAVAILABLE",
@@ -86,12 +102,12 @@ def _sample_fast_result(payload_type: str = "URL") -> FastPathResult:
             "features": {"domain_age_days": 200},
         },
         feeds,
-        None,
+        upi,
         None,
         payload_type=payload_type,
     )
     payload = (
-        "upi://pay?pa=demo%40oksbi"
+        "upi://pay?pa=demo%40okaxis&pn=Demo%20Merchant&am=12.00&cu=INR&tr=order-123"
         if payload_type == "UPI_DEEP_LINK"
         else "https://example.com/path"
     )
@@ -245,6 +261,26 @@ def test_non_url_scan_completes_without_sandbox(
     assert session.added[0].completed_at is not None
 
 
+def test_upi_transaction_pillar_is_persisted_and_returned(
+    api_dependencies, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, session, _ = api_dependencies
+    result = _sample_fast_result("UPI_DEEP_LINK")
+    monkeypatch.setattr(endpoints, "run_fast_path", _result_runner(result))
+
+    created = client.post("/api/v1/scan", json={"input": result.analysis_payload})
+    scan_id = created.json()["scan_id"]
+    report = client.get(f"/api/v1/scan/{scan_id}")
+
+    assert created.status_code == 202
+    assert created.json()["status"] == "COMPLETED"
+    assert session.added[0].transaction_indicators["status"] == "FLAGGED"
+    assert report.status_code == 200
+    transaction = report.json()["advisory_report"]["transaction_context_analysis"]
+    assert transaction["status"] == "FLAGGED"
+    assert transaction["indicators"][0]["code"] == "PREFILLED_AMOUNT"
+
+
 @pytest.mark.parametrize(
     "payload", [{"input": ""}, {"input": "x" * 2049}, {"input": "x", "extra": True}]
 )
@@ -296,6 +332,33 @@ def test_get_rate_limit_returns_429(
 
     assert response.status_code == 429
     assert 1 <= int(response.headers["retry-after"]) <= 60
+
+
+def test_rate_limit_fails_open_on_redis_error(
+    api_dependencies, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, _, _ = api_dependencies
+    monkeypatch.setattr(
+        endpoints, "run_fast_path", _result_runner(_sample_fast_result())
+    )
+    monkeypatch.setattr(endpoints, "enqueue_sandbox", lambda scan_id: None)
+
+    class FailingRedis:
+        async def eval(self, *args, **kwargs):
+            raise ConnectionError("Connection refused")
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(
+        endpoints, "get_redis_client", lambda: _async_redis_iter(FailingRedis())
+    )
+    response = client.post("/api/v1/scan", json={"input": "https://example.com/path"})
+    assert response.status_code == 202
+
+
+async def _async_redis_iter(client_obj):
+    yield client_obj
 
 
 def _result_runner(value):

@@ -13,6 +13,7 @@ RUN groupadd -r appuser && useradd -r -g appuser -u 10000 appuser
 COPY requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
+COPY data ./data
 COPY app ./app
 
 USER appuser

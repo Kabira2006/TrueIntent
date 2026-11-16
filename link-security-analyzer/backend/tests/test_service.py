@@ -177,6 +177,56 @@ async def test_input_classification_and_embedded_upi_routing(
     assert result.advisory_report.transaction_context_analysis.status == "FLAGGED"
 
 
+@pytest.mark.parametrize(
+    ("payload", "expected_code"),
+    [
+        (
+            (
+                "upi://pay?pa=demo%40okaxis&pn=Demo%20Merchant&am=12.00"
+                "&cu=INR&tr=order-123"
+            ),
+            "PREFILLED_AMOUNT",
+        ),
+        (
+            "upi://collect?pa=demo%40okaxis&pn=Demo%20Merchant&tr=order-123",
+            "UPI_COLLECT_REQUEST",
+        ),
+        ("upi://unknown?pa=demo%40okaxis", "MALFORMED_UPI_URI"),
+    ],
+)
+async def test_upi_payloads_produce_reportable_transaction_results(
+    mocked_checks: None, payload: str, expected_code: str
+) -> None:
+    result = await run_fast_path(
+        payload,
+        redis_client=_Redis(),  # type: ignore[arg-type]
+        settings=_settings(),
+    )
+
+    pillar = result.advisory_report.transaction_context_analysis
+    assert pillar.status == "FLAGGED"
+    assert expected_code in {indicator.code for indicator in pillar.indicators}
+
+
+async def test_missing_upi_runtime_config_is_explicitly_unavailable(
+    mocked_checks: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def missing_config():
+        raise FileNotFoundError("UPI config is not installed")
+
+    monkeypatch.setattr("app.core.upi._load_config", missing_config)
+    result = await run_fast_path(
+        "upi://pay?pa=demo%40okaxis&am=12.00",
+        redis_client=_Redis(),  # type: ignore[arg-type]
+        settings=_settings(),
+    )
+
+    pillar = result.advisory_report.transaction_context_analysis
+    assert pillar.status == "UNAVAILABLE"
+    assert pillar.indicators[0].code == "CHECK_UNAVAILABLE"
+    assert result.advisory_report.overall_indicator == "INCONCLUSIVE"
+
+
 async def test_cache_outage_does_not_break_fast_path(
     mocked_checks: None,
 ) -> None:

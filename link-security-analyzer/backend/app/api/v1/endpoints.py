@@ -1,5 +1,7 @@
+
 """Scan submission, polling, and Redis fixed-window rate limiting."""
 
+import asyncio
 import logging
 import time
 import uuid
@@ -62,12 +64,9 @@ async def _enforce_rate_limit(
     key = f"rate-limit:{route}:{client_ip}:{bucket}"
     try:
         count = int(await client.eval(_RATE_LIMIT_SCRIPT, 1, key, 60))
-    except RedisError as error:
-        logger.warning("rate limiter unavailable (%s)", type(error).__name__)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="The request limit could not be checked.",
-        ) from error
+    except (RedisError, ConnectionError) as error:
+        logger.warning("rate limiter unavailable (%s); failing open", type(error).__name__)
+        return
     if count > limit:
         retry_after = 60 - (now % 60)
         raise HTTPException(
@@ -245,6 +244,119 @@ async def get_scan(
             transaction_context_analysis=transaction,
         ),
     )
+
+
+_cached_playwright_status: tuple[float, bool] | None = None
+
+
+async def _check_db_quick() -> bool:
+    try:
+        from sqlalchemy import text
+
+        from app.db.session import get_async_engine
+
+        async def _run() -> None:
+            async with get_async_engine().connect() as conn:
+                await conn.execute(text("SELECT 1"))
+
+        await asyncio.wait_for(_run(), timeout=1.5)
+        return True
+    except Exception:  # noqa: BLE001 - health check must never raise
+        return False
+
+
+async def _check_redis_quick() -> bool:
+    try:
+        async def _run() -> None:
+            client = redis.from_url(get_settings().redis_url)
+            try:
+                await client.ping()
+            finally:
+                await client.aclose()
+
+        await asyncio.wait_for(_run(), timeout=1.5)
+        return True
+    except Exception:  # noqa: BLE001 - health check must never raise
+        return False
+
+
+async def _check_worker_quick() -> bool:
+    try:
+        from app.workers.celery_app import celery_app
+
+        def _ping() -> bool:
+            insp = celery_app.control.inspect(timeout=1.0)
+            p = insp.ping() if insp else None
+            return bool(p)
+
+        return await asyncio.wait_for(asyncio.to_thread(_ping), timeout=2.0)
+    except Exception:  # noqa: BLE001 - health check must never raise
+        return False
+
+
+async def _check_playwright_quick() -> bool:
+    global _cached_playwright_status
+    now = time.time()
+    if _cached_playwright_status is not None:
+        cached_time, cached_val = _cached_playwright_status
+        if now - cached_time < 60.0:
+            return cached_val
+    try:
+        from playwright.async_api import async_playwright
+
+        async def _run() -> None:
+            async with async_playwright() as p:
+                b = await p.chromium.launch(headless=True)
+                await b.close()
+
+        await asyncio.wait_for(_run(), timeout=5.0)
+        _cached_playwright_status = (now, True)
+        return True
+    except Exception as e:  # noqa: BLE001 - health check must never raise
+        logger.info("playwright health check failed (%s)", type(e).__name__)
+        _cached_playwright_status = (now, False)
+        return False
+
+
+def _get_git_commit() -> str | None:
+    try:
+        import subprocess
+
+        out = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=1.0,
+        )
+        return out.strip()
+    except Exception:  # noqa: BLE001 - git commit probe can fail outside git repo
+        return None
+
+
+@router.get("/health", name="health")
+async def get_health() -> dict[str, object]:
+    """Rich health check reporting db, redis, worker, playwright, and app version."""
+    db_ok, redis_ok, worker_ok, playwright_ok = await asyncio.gather(
+        _check_db_quick(),
+        _check_redis_quick(),
+        _check_worker_quick(),
+        _check_playwright_quick(),
+    )
+    settings = get_settings()
+    feeds_status = {
+        "google_safe_browsing": "configured" if bool(settings.gsb_api_key) else "unconfigured",
+        "virustotal": "configured" if bool(settings.vt_api_key) else "unconfigured",
+    }
+    return {
+        "status": "ok" if (db_ok and redis_ok) else "degraded",
+        "app_version": "0.1.0",
+        "git_commit": _get_git_commit(),
+        "database": db_ok,
+        "redis": redis_ok,
+        "worker": worker_ok,
+        "playwright_launch": playwright_ok,
+        "threat_feeds": feeds_status,
+    }
 
 
 def _pillar_from_storage(value: object) -> AdvisoryPillar:
