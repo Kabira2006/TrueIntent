@@ -281,7 +281,7 @@ async def scan_page(
             ),
             timeout=current_settings.sandbox_page_timeout_seconds + 10,
         )
-    except (TimeoutError, asyncio.TimeoutError):
+    except TimeoutError:
         logger.info("sandbox page scan timed out")
         indicators.append(
             _indicator(

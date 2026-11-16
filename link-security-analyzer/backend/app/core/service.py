@@ -101,7 +101,7 @@ async def run_fast_path(
             )
         except TimeoutError:
             logger.info("fast-path cache write exceeded the remaining time budget")
-        except Exception:
+        except Exception:  # noqa: BLE001 - non-critical cache write
             logger.info("fast-path cache write failed")
         return result
     finally:

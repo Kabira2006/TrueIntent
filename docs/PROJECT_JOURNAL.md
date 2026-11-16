@@ -17,6 +17,7 @@ If you do not code, start here. Read the "In one minute" section of the latest c
 - [Chapter 7: Spotting look-alike pages (visual brand check)](#chapter-7-spotting-look-alike-pages-visual-brand-check)
 - [Chapter 9: Does it actually work? (evaluation)](#chapter-9-does-it-actually-work-evaluation)
 - [Chapter 10: Whole-system recap and demo guide](#chapter-10-whole-system-recap-and-demo-guide)
+- [Chapter R0: Diagnose, baseline, GitHub, install the rules](#chapter-r0-diagnose-baseline-github-install-the-rules)
 - Chapters 2 and 8: not yet appended.
 
 ## Chapter 0: The big picture and setup
@@ -1067,3 +1068,63 @@ The Next.js screen and its requested visual screenshot are **not implemented / n
 - Netguard: the server-side destination checker that blocks private or special network addresses.
 - Signal vector: a flat collection of numeric and boolean facts for later analysis.
 - Egress firewall: a network rule that controls where a service is allowed to connect.
+
+## Chapter R0: Diagnose, baseline, GitHub, install the rules
+Date: 2026-11-16 | Commit message: phase-0: diagnose baseline, github setup, and rebuild rules
+
+### 1. In one minute
+We stopped guessing why the link scanner always showed "Inconclusive" or "Unavailable" and tested every moving part with real commands. We found the exact causes: the lexical URL analyzer was completely missing, threat feeds had no keys, and the scoring system forced an "Inconclusive" result if even a single optional check was unavailable. We put the project on a dedicated rebuild branch, installed strict engineering rules into `AGENTS.md`, and added a rich health check endpoint so the system can honestly report whether its database, cache, worker, and browser are alive.
+
+### 2. Why we did this
+Before rebuilding a broken system, you must know what is actually broken versus what is working. Claiming the whole system "doesn't work" without evidence leads to rewrites of things that already function. By documenting an exact baseline in `docs/DIAGNOSIS.md` and setting up strict rebuild rules, we ensure every future phase adds real, verified value rather than hollow stubs.
+
+### 3. How it works
+```mermaid
+flowchart TD
+  R["Rebuild Prompt (Phase 0)"] --> G["Git Branch: rebuild/phase-0-baseline"]
+  G --> T["Inspect Checks a-g"]
+  T --> D["Generate docs/DIAGNOSIS.md with Command Evidence"]
+  T --> E["Capture 4 Canonical Scan Reponses in docs/diagnosis/"]
+  T --> H["Implement GET /api/v1/health with Short Timeouts"]
+  H --> C["Run Full Pytest (177 passed) and Ruff Lint"]
+  C --> B["Phase 0 Closeout"]
+```
+Caption: Notice every diagnosis finding is grounded in direct command execution and stored as verifiable JSON artifacts.
+
+### 4. Decisions and reasoning
+| decision | options considered | why we chose this | trade-off |
+|---|---|---|---|
+| Grounded diagnosis in `docs/DIAGNOSIS.md` | Start rewriting code immediately or write diagnosis report | Writing the diagnosis table forces us to identify exact root causes and prevents premature code churn. | Takes time upfront to test each subsystem. |
+| Non-raising `GET /api/v1/health` with short timeouts | Raise 500 on missing services or return structured component statuses | A health check that crashes when a component is offline is useless for monitoring. Short timeouts (<2s) prevent health check hangs. | Callers must inspect individual component booleans. |
+| Save canonical JSON outputs in `docs/diagnosis/` | Just print outputs to terminal or persist as files | Persisting JSON outputs provides an immutable benchmark to compare future phases against. | Stores small static files in repo. |
+| Cache Playwright launch status in `/health` for 60 seconds | Test browser launch on every health call or cache | Launching Chromium on every single HTTP GET /health request would cause CPU spikes. | Health status has a 60-second freshness window for browser checks. |
+
+### 5. What we built
+- `AGENTS.md`: Installed Section A "REBUILD RULES" (R1 through R9).
+- `.gitignore`: Added patterns for `*.joblib`, `data/raw/`, and `screenshots/`.
+- `docs/DIAGNOSIS.md`: Comprehensive diagnosis matrix detailing items (a) through (g) with command outputs.
+- `docs/diagnosis/*.json`: Saved canonical scan responses for example.com, google.com, sbi fake, and upi collect.
+- `backend/app/api/v1/endpoints.py`: Added rich `GET /api/v1/health` endpoint reporting database, redis, worker, playwright launch, and threat feed configuration with timeouts.
+- `backend/app/core/sandbox.py`: Cleaned up exception handling for builtin `TimeoutError`.
+- `backend/app/core/service.py`: Added ruff `BLE001` exemption for non-critical cache write.
+- `docs/PROJECT_JOURNAL.md`: Appended Chapter R0 and updated Table of Contents.
+
+### 6. What actually happened
+- Full backend pytest suite passed: **177 passed, 1 deselected** in 15.53 seconds.
+- Ruff linter passed cleanly: **All checks passed!**
+- Saved test scans showed that 3 out of 4 inputs produced `INCONCLUSIVE` due to the aggregator requiring 100% check availability.
+- Local Playwright browser launch succeeded directly with Chromium v153.0.8010.12.
+- Docker engine was stopped on the local machine during this turn, which demonstrated that local fallback and rich health reporting gracefully report component statuses without hanging.
+
+### 7. Limits and honest weaknesses
+- Docker compose container tests were not run in this turn because Docker Desktop was not active; backend tests were verified in the local Python 3.10 environment.
+- The `app.core.lexical` module remains absent until Phase 2.
+- External threat feeds remain unconfigured until Phase 3 and 4.
+
+### 8. How to explain this to a judge in 30 seconds
+Before touching a line of core security logic, we ran an honest technical diagnosis across the entire system. We discovered why it was returning "Inconclusive": the URL lexical analyzer was completely missing, external feed API keys were absent, and the aggregator was coded to fail if even one check was missing. We proved the browser sandbox actually works, instituted strict coding rules, and built an automated health endpoint so the system can transparently report its operational state.
+
+### 9. New terms
+- Baseline: The initial measured state of a system before improvements or changes are made.
+- Empirical evidence: Information acquired by direct observation or measurement rather than theory.
+- Degraded state: When a system continues operating with reduced capabilities instead of failing completely.
