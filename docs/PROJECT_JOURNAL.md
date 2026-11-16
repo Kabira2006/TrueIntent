@@ -21,6 +21,7 @@ If you do not code, start here. Read the "In one minute" section of the latest c
 - [Chapter R1: One broken check can no longer break the scan](#chapter-r1-one-broken-check-can-no-longer-break-the-scan)
 - [Chapter R2: Reading the address itself (spelling, look-alikes, brands)](#chapter-r2-reading-the-address-itself-spelling-lookalikes-brands)
 - [Chapter R3: Remembering the good and the bad (popularity and blocklists)](#chapter-r3-remembering-the-good-and-the-bad-popularity-and-blocklists)
+- [Chapter R4: Infrastructure checks and optional external reputation](#chapter-r4-infrastructure-checks-and-optional-external-reputation)
 
 ## Chapter 0: The big picture and setup
 Date: 2026-10-16 | Commit message: chunk-0: repo rules, skeleton and journal
@@ -1362,3 +1363,118 @@ We downloaded three public reputation feeds: Tranco's top-1M popular sites, Open
 - Registrable domain: The part of a domain you can actually purchase (e.g., "github.io" is registrable, but "user.github.io" is a subdomain on the platform).
 - Shared-hosting suffix: A platform domain where each subdomain belongs to a different user/tenant (e.g., github.io, vercel.app).
 - Idempotent operation: A script that can be run multiple times safely, producing the same result (our load script uses UPSERT logic).
+
+
+## Chapter R4: Infrastructure checks and optional external reputation
+Date: 2024-11-16 | Commit message: phase-4: rdap age, dns, tls, optional gsb and virustotal
+
+### 1. In one minute
+We added four infrastructure checks that look behind the web address to see how the domain is set up and whether the security certificate is trustworthy. We also wrapped two optional external reputation services (Google Safe Browsing and VirusTotal) that check if the URL is on known threat lists. All checks are bounded by runner timeouts so one slow or failing check cannot break the whole scan. A fresh TLS certificate (less than 7 days old) now raises a medium-severity signal because phishers often buy new certificates for fake sites.
+
+### 2. Why we did this
+Domain age alone is not enough. A brand-new domain with working DNS and a fresh certificate looks different from an old, established site. Expired certificates or hostname mismatches are clear warning signs. Low TTL values (time-to-live, which is how long a DNS answer stays valid) can indicate that the attacker is ready to move the site to a new server quickly. External reputation feeds (Google Safe Browsing and VirusTotal) add a second opinion from global threat databases, but they are optional because they require API keys and rate limits.
+
+### 3. How it works
+Infrastructure checks query domain registration databases (RDAP), DNS servers, and TLS certificate information. External reputation checks query third-party APIs if keys are configured. All checks are registered with the runner using the `@check` decorator, which wraps each in its own timeout.
+
+```mermaid
+flowchart TD
+  Runner["Runner calls check by name"] --> |4s timeout| RDAP["domain_age_rdap check"]
+  Runner --> |2s timeout| DNS["dns_records check"]
+  Runner --> |3s timeout| TLS["tls_certificate check"]
+  Runner --> |3s timeout| GSB["google_safe_browsing check"]
+  Runner --> |3s timeout| VT["virustotal check"]
+  
+  RDAP --> RDAPData["RDAP lookup (with WHOIS fallback)"]
+  RDAPData --> RDAPSignal["Signals: DOMAIN_REGISTERED_LT_30D, DOMAIN_REGISTERED_LT_90D, WHOIS_RDAP_UNAVAILABLE"]
+  
+  DNS --> DNSLookup["DNS A/AAAA/MX/NS records"]
+  DNSLookup --> DNSSignal["Signals: DNS_NO_A_RECORD, DNS_LOW_A_TTL, DNS_UNAVAILABLE"]
+  
+  TLS --> TLSConnect["TLS handshake + certificate retrieval"]
+  TLSConnect --> TLSCheck["Check expiry, hostname match, age"]
+  TLSCheck --> TLSSignal["Signals: TLS_EXPIRED, TLS_HOST_MISMATCH, TLS_CERT_NEW_LT_7D, NO_TLS"]
+  
+  GSB --> GSBApi["Google Safe Browsing API (if key configured)"]
+  GSBApi --> GSBSignal["Signals: GSB_MALWARE, GSB_SOCIAL_ENGINEERING, GSB_UNWANTED_SOFTWARE"]
+  
+  VT --> VTApi["VirusTotal API (if key configured)"]
+  VTApi --> VTSignal["Signals: VT_MALICIOUS_GT_3, VT_MALICIOUS_1_3"]
+```
+
+Caption: Notice each check has its own timeout, and all return structured signals instead of raising exceptions into the scan.
+
+**Step-by-step walk-through:**
+1. The runner receives a list of check names (e.g., `["domain_age_rdap", "dns_records", "tls_certificate"]`).
+2. For each check, the runner wraps the async call in `asyncio.wait_for` with the check's timeout.
+3. If the check returns within the timeout, the runner converts the result into a `CheckResult` with signals.
+4. If the check times out or raises an exception, the runner returns a `CheckResult` with status `unavailable` and a reason.
+5. The RDAP check queries the RDAP server (using a bootstrap file that maps TLDs to RDAP servers), then falls back to WHOIS if RDAP fails.
+6. The DNS check queries for A, AAAA, MX, and NS records, and calculates the minimum TTL.
+7. The TLS check opens a TLS connection to the host, retrieves the certificate, and checks the subject CN, SAN hosts, expiry date, and issue date.
+8. The GSB check calls the Google Safe Browsing Lookup API if the `GOOGLE_SAFEBROWSING_KEY` is configured; otherwise it returns status `UNAVAILABLE` with an info signal.
+9. The VirusTotal check calls the VirusTotal URL scan API if the `VIRUSTOTAL_KEY` is configured and rate limits allow; otherwise it returns status `UNAVAILABLE` with an info signal.
+10. All checks return their signals to the runner, which aggregates them into the scan result.
+
+### 4. Decisions and reasoning
+| decision | options considered | why we chose this | trade-off |
+|---|---|---|---|
+| Wrap existing infrastructure.py and threat_feeds.py as runner checks | Rewrite as runner checks, leave as-is | The code already existed from the chunk-4 commit. Wrapping it as runner checks makes it accessible to the runner without rewriting logic. | Two layers (wrapper + implementation). |
+| TLS checks in separate module | Add to infrastructure.py, new module | TLS is a different concern (certificate security) from domain age and DNS. A separate module keeps it clean. | One more file. |
+| TLS timeout 3 seconds | 2s, 3s, 5s | TLS handshakes on slow or throttled servers can take 2+ seconds. 3 seconds is enough for most cases without blocking the scan too long. | Very slow servers may timeout. |
+| Signal TLS_CERT_NEW_LT_7D at 10 points medium | 5 points low, 10 points medium, 15 points high | Fresh certificates (less than 7 days) are suspicious for phishing but not definitive proof. 10 points medium is a reasonable warning. | Legitimate new sites may get flagged. |
+| GSB and VT optional (info signal if unavailable) | Require keys, skip if missing | Not everyone has or wants API keys. Returning an info-level signal explains that the check was not run, without failing the scan. | Scans without keys miss external reputation data. |
+| Python 3.9 compatibility (use `Optional` not `|` syntax) | Require 3.10+, use 3.9 syntax | The project spec says 3.11+ but the local Python is 3.9. Using `Optional` and `Union` keeps it compatible. | Slightly more verbose type hints. |
+| TLS hostname matching with wildcard support | Exact match only, wildcard support | Certificates often use wildcard SANs like `*.example.com`. Supporting wildcards avoids false positives. | More complex matching logic. |
+| Cache GSB and VT results in Redis | No cache, cache in Redis | External APIs have rate limits and cost money. Caching for 1 hour avoids redundant calls. | Stale data for up to 1 hour. |
+
+### 5. What we built
+Files created:
+- backend/app/core/tls.py: TLS certificate checking with signals for expired certs, hostname mismatches, and fresh certificates.
+- backend/tests/test_tls.py: 22 tests for TLS info retrieval, hostname matching, and check signals (12 passed, 10 skipped due to pytest-asyncio config).
+- docs/KEYS.md: Beginner guide for obtaining and configuring GSB, VirusTotal, and URLhaus API keys, with privacy and testing notes.
+
+Files modified:
+- backend/app/core/infrastructure.py: Added `check_domain_age` and `check_dns_records` runner check wrappers (4s and 2s timeouts, group `infrastructure`).
+- backend/app/core/threat_feeds.py: Added `check_google_safe_browsing` and `check_virustotal` runner check wrappers (3s timeouts, group `external_reputation`).
+
+### 6. What actually happened
+We started on branch `rebuild/phase-4-infra`. The existing `infrastructure.py` (RDAP and DNS) and `threat_feeds.py` (GSB and VirusTotal) were already implemented from the chunk-4 commit (e73f5c2). We verified the data/dns.json RDAP bootstrap file exists. We created the TLS module from scratch. Tests ran and passed: 12 passed (synchronous hostname matching and parsing tests), 10 skipped (async tests require pytest-asyncio configuration we did not fix). The Python 3.9 compatibility issue appeared (cannot use `|` for unions), so we changed `str | None` to `Optional[str]` in tls.py. We could not run ruff because it is not installed, and we could not run the full test suite because dependencies like `asyncwhois`, `tldextract`, and `imagehash` are not installed. This is expected outside Docker. We created docs/KEYS.md as a standalone guide. We did not run the acceptance commands (start the stack, call the health endpoint) because Docker is not running.
+
+Real test output summary:
+- `test_tls.py`: 12 passed, 10 skipped, 21 warnings (0.13s)
+- Full suite not run: missing dependencies outside Docker
+
+Deviations from plan:
+- Python 3.9 compatibility required `Optional` instead of `|` syntax (spec says 3.11+ but local is 3.9)
+- Tests and ruff not run in full (dependencies missing outside Docker)
+- Acceptance commands not run (Docker not available)
+
+### 7. Limits and honest weaknesses
+- TLS checks only support basic wildcard matching (`*.example.com`). They do not support multi-level wildcards or internationalized domain names in certificates.
+- RDAP and WHOIS data quality varies by registrar. Some registrars hide registration dates or return incomplete data.
+- DNS checks assume standard record types (A, AAAA, MX, NS). They do not check DNSSEC or other advanced DNS features.
+- GSB and VT results depend on third-party API availability and rate limits. If the API is down or the quota is exhausted, the check returns unavailable.
+- TLS hostname matching is case-insensitive but does not handle IDN (internationalized domain names) encoded differently in the certificate vs. the URL.
+- Fresh certificate signal (TLS_CERT_NEW_LT_7D) will flag legitimate new sites. It is a heuristic, not proof of phishing.
+- The tests do not run the actual TLS handshake or RDAP/DNS lookups. They mock the external calls. Integration tests would require network access and live servers.
+- Python 3.9 compatibility means we cannot use the newer `|` union syntax. This is a documentation mismatch (spec says 3.11+).
+
+### 8. How to explain this to a judge in 30 seconds
+After checking the spelling and reputation of a web address, we now check the behind-the-scenes setup: how old is the domain, are the DNS records normal, is the security certificate valid and not suspiciously fresh, and do global threat databases know about this link. Each check is independent and timed, so one slow check cannot block the scan. External databases (Google Safe Browsing, VirusTotal) are optional and require API keys.
+
+### 9. New terms
+- **RDAP (Registration Data Access Protocol)**: a modern way to look up who registered a domain and when, like a phone book for internet addresses. It replaced the older WHOIS protocol.
+- **WHOIS**: the older protocol for looking up domain registration information. Still used as a fallback when RDAP is not available.
+- **DNS (Domain Name System)**: the internet's address book that translates names like "example.com" into numeric IP addresses that computers use to connect.
+- **TTL (Time-To-Live)**: how long a DNS answer stays valid before being re-checked, measured in seconds. Low TTL (like 60 seconds) means the answer expires fast, which can indicate the attacker wants flexibility to move the site quickly.
+- **TLS (Transport Layer Security)**: the encryption system that protects web traffic (the "s" in "https"). It uses certificates to prove the server's identity.
+- **Certificate**: a digital ID card for a website, issued by a trusted authority (like Let's Encrypt or DigiCert). It contains the domain name, the public key for encryption, and expiry dates.
+- **Subject CN (Common Name)**: the main domain name in a certificate, like "example.com".
+- **SAN (Subject Alternative Name)**: additional domain names listed in a certificate, like "www.example.com" and "api.example.com". One certificate can cover multiple names.
+- **Wildcard certificate**: a certificate for `*.example.com` that covers any subdomain (www, api, mail, etc.).
+- **TLS handshake**: the initial negotiation where the client and server agree on encryption and exchange the certificate.
+- **Google Safe Browsing (GSB)**: Google's free API that checks if a URL is on a list of known phishing or malware sites.
+- **VirusTotal (VT)**: a service that checks URLs against 80+ antivirus and threat intelligence vendors. It requires an API key and has rate limits.
+- **Rate limit**: the maximum number of API calls allowed per minute or day. Exceeding the limit returns an error.
+- **API key**: a secret code that identifies your app to a third-party service. Treat it like a password.

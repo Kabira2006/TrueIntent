@@ -577,3 +577,125 @@ def _string_value(value: Any) -> str | None:
             None,
         )
     return None
+
+
+# ----------------------------------------------------------------------------------
+# Runner check wrappers
+# ----------------------------------------------------------------------------------
+
+from app.core.runner import CheckResult, Signal, check
+
+
+@check(name="domain_age_rdap", timeout_s=4.0, group="infrastructure")
+async def check_domain_age(ctx: Any) -> CheckResult:
+    """Check domain age via RDAP (with WHOIS fallback).
+
+    Signals:
+        DOMAIN_REGISTERED_LT_30D: Domain registered less than 30 days ago (20 points, high)
+        DOMAIN_REGISTERED_LT_90D: Domain registered 30-90 days ago (10 points, medium)
+        WHOIS_RDAP_UNAVAILABLE: Neither RDAP nor WHOIS returned data (5 points, low)
+
+    Returns:
+        CheckResult with domain age details
+    """
+    url_obj = getattr(ctx, "url", None)
+    registrable_domain = getattr(ctx, "registrable_domain", None)
+
+    if not registrable_domain:
+        return CheckResult(
+            name="domain_age_rdap",
+            status="skipped",
+            group="infrastructure",
+            reason="no_domain",
+        )
+
+    # Get RDAP/WHOIS info
+    domain_info = await get_domain_info(
+        registrable_domain,
+        repository=getattr(ctx, "domain_repository", None),
+        redis_client=getattr(ctx, "redis", None),
+        http_client=getattr(ctx, "http_client", None),
+    )
+
+    detail: dict[str, Any] = {
+        "domain": registrable_domain,
+        "status": domain_info.status,
+        "age_days": domain_info.domain_age_days,
+        "registered_at": (
+            domain_info.registered_at.isoformat() if domain_info.registered_at else None
+        ),
+        "registrar": domain_info.registrar,
+    }
+
+    # Convert indicators to signals
+    signals = [
+        Signal(
+            id=ind.code,
+            points=ind.points,
+            severity=ind.severity,
+            explain=ind.message,
+            evidence=ind.evidence,
+        )
+        for ind in domain_info.indicators
+    ]
+
+    return CheckResult(
+        name="domain_age_rdap",
+        status="ok",
+        group="infrastructure",
+        signals=signals,
+        detail=detail,
+    )
+
+
+@check(name="dns_records", timeout_s=2.0, group="infrastructure")
+async def check_dns_records(ctx: Any) -> CheckResult:
+    """Check DNS A/AAAA/MX/NS records and TTL values.
+
+    Signals:
+        DNS_NO_A_RECORD: No A or AAAA records found (15 points, medium)
+        DNS_LOW_A_TTL: A record TTL less than 300 seconds (5 points, low)
+        DNS_UNAVAILABLE: DNS lookup failed entirely (5 points, low)
+
+    Returns:
+        CheckResult with DNS record counts and TTLs
+    """
+    registrable_domain = getattr(ctx, "registrable_domain", None)
+
+    if not registrable_domain:
+        return CheckResult(
+            name="dns_records",
+            status="skipped",
+            group="infrastructure",
+            reason="no_domain",
+        )
+
+    # Get DNS info
+    dns_info = await resolve_dns(registrable_domain)
+
+    detail: dict[str, Any] = {
+        "domain": registrable_domain,
+        "status": dns_info.status,
+        "record_counts": dns_info.record_counts,
+        "minimum_a_ttl": dns_info.minimum_a_ttl,
+    }
+
+    # Convert indicators to signals
+    signals = [
+        Signal(
+            id=ind.code,
+            points=ind.points,
+            severity=ind.severity,
+            explain=ind.message,
+            evidence=ind.evidence,
+        )
+        for ind in dns_info.indicators
+    ]
+
+    return CheckResult(
+        name="dns_records",
+        status="ok",
+        group="infrastructure",
+        signals=signals,
+        detail=detail,
+    )
