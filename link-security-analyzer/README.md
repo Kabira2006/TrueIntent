@@ -154,11 +154,23 @@ Copy-Item .env.example .env
 docker compose up --build postgres redis backend worker
 ```
 
-The frontend is not implemented yet, and the frontend Compose service remains
-a placeholder. Use `http://localhost:8000/docs` or a `POST /api/v1/scan`
-request followed by `GET` on the returned `poll_url`. A sample input such as
-`https://example.com` is for demonstration only; live provider results depend
-on API keys and network availability.
+Both Python images include the runtime files under `backend/data/`, including
+the UPI handle/threshold configuration and the DNS registry bootstrap data.
+If required runtime configuration is missing, the affected check reports
+`UNAVAILABLE`; it is not treated as a successful check with no indicators.
+
+Start the full application, including the web interface, with:
+
+```powershell
+docker compose up --build
+```
+
+Open `http://localhost:3000` to submit a URL, UPI link, or QR text and read its
+persisted report. The frontend calls `http://localhost:8000` from the user's
+browser; the public API URL can be changed with `NEXT_PUBLIC_API_BASE_URL`.
+The API documentation remains available at `http://localhost:8000/docs`.
+There is no scan-history API endpoint, so the interface does not fabricate a
+recent-scan list.
 
 ```powershell
 $accepted = Invoke-RestMethod -Method Post `
@@ -173,6 +185,15 @@ Run the backend tests from `backend/`:
 ```powershell
 python -m pytest -q
 python -m pytest -q -m integration
+```
+
+Run frontend checks from `frontend/`:
+
+```powershell
+npm ci
+npm test
+npm run typecheck
+npm run build
 ```
 
 Evaluation tools are in `eval/`. Generate local source-backed splits with

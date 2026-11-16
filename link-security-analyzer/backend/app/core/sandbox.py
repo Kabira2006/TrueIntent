@@ -270,16 +270,47 @@ async def scan_page(
         guard._blocked(url, error.reason_code)
         return _result(indicators, {})
 
-    return await asyncio.wait_for(
-        _scan_page_in_browser(
-            url,
-            current_settings,
-            domain_age_days=domain_age_days,
-            test_origin=test_origin,
+    try:
+        return await asyncio.wait_for(
+            _scan_page_in_browser(
+                url,
+                current_settings,
+                domain_age_days=domain_age_days,
+                test_origin=test_origin,
+                indicators=indicators,
+            ),
+            timeout=current_settings.sandbox_page_timeout_seconds + 10,
+        )
+    except (TimeoutError, asyncio.TimeoutError):
+        logger.info("sandbox page scan timed out")
+        indicators.append(
+            _indicator(
+                "SANDBOX_UNAVAILABLE",
+                "info",
+                "The browser check timed out.",
+                {"reason": "TimeoutError"},
+            )
+        )
+        return SandboxResult(
+            status="UNAVAILABLE",
             indicators=indicators,
-        ),
-        timeout=current_settings.sandbox_page_timeout_seconds + 10,
-    )
+            features={},
+        )
+    except Exception as error:  # noqa: BLE001 - graceful fallback on missing browser runtime or setup error
+        logger.warning("sandbox execution failed (%s): %s", type(error).__name__, error)
+        indicators.append(
+            _indicator(
+                "SANDBOX_UNAVAILABLE",
+                "info",
+                "The browser runtime could not be executed.",
+                {"reason": type(error).__name__},
+            )
+        )
+        return SandboxResult(
+            status="UNAVAILABLE",
+            indicators=indicators,
+            features={},
+        )
 
 
 async def _scan_page_in_browser(
@@ -388,6 +419,21 @@ async def _scan_page_in_browser(
                 "SANDBOX_UNAVAILABLE",
                 "info",
                 "The browser check could not be completed within its limits.",
+                {"reason": type(error).__name__},
+            )
+        )
+        return SandboxResult(
+            status="UNAVAILABLE",
+            indicators=indicators,
+            features=features,
+        )
+    except Exception as error:  # noqa: BLE001 - graceful fallback for missing browser runtime or unexpected error
+        logger.warning("sandbox browser failed (%s): %s", type(error).__name__, error)
+        indicators.append(
+            _indicator(
+                "SANDBOX_UNAVAILABLE",
+                "info",
+                "The browser runtime is unavailable or failed to launch.",
                 {"reason": type(error).__name__},
             )
         )

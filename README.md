@@ -4,26 +4,25 @@ TrueIntent is a research prototype that examines links, UPI payment links, and Q
 
 ## Quick start
 
-The API and its PostgreSQL, Redis, and background-worker dependencies are in
+The web app, API, PostgreSQL, Redis, and background worker are in
 [`link-security-analyzer/`](link-security-analyzer/). From that directory:
 
 ```powershell
 Copy-Item .env.example .env
-docker compose up --build postgres redis backend worker
+docker compose up --build
 ```
 
-Then open `http://localhost:8000/docs` for the API documentation. Submit a
-placeholder link such as `https://example.com` to `POST /api/v1/scan` and poll
-the returned `poll_url` with `GET`. The Next.js interface has not been
-implemented yet; the Compose frontend service is still a placeholder, so this
-quick start is for the API only.
+Open `http://localhost:3000` for the frontend or
+`http://localhost:8000/docs` for the API documentation. The frontend submits
+inputs and polls the API's returned `poll_url` for the persisted three-pillar
+report. A placeholder such as `https://example.com` can be used for a demo.
 
 ```powershell
 $accepted = Invoke-RestMethod -Method Post `
   -Uri "http://localhost:8000/api/v1/scan" `
   -ContentType "application/json" `
   -Body (@{ input = "https://example.com" } | ConvertTo-Json)
-Invoke-RestMethod -Uri ("http://localhost:8000" + $accepted.poll_url)
+Invoke-RestMethod -Uri $accepted.poll_url
 ```
 
 To run the backend tests, change to

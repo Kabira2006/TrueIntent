@@ -175,6 +175,11 @@ async def lookup_google_safe_browsing(
             "Google Safe Browsing lookup unavailable (%s)", type(error).__name__
         )
         return _unavailable("Google Safe Browsing")
+    except Exception as error:  # noqa: BLE001 - graceful fallback for threat list lookup
+        logger.warning(
+            "Google Safe Browsing lookup failed (%s)", type(error).__name__
+        )
+        return _unavailable("Google Safe Browsing")
     await _write_cache(redis_client, key, result)
     return result
 
@@ -222,6 +227,9 @@ async def lookup_virustotal(
             result = _virustotal_result(malicious, total)
     except (httpx.HTTPError, ValueError, TypeError, KeyError, AttributeError) as error:
         logger.info("VirusTotal lookup unavailable (%s)", type(error).__name__)
+        return _unavailable("VirusTotal")
+    except Exception as error:  # noqa: BLE001 - graceful fallback for VirusTotal lookup
+        logger.warning("VirusTotal lookup failed (%s)", type(error).__name__)
         return _unavailable("VirusTotal")
     await _write_cache(redis_client, key, result)
     return result

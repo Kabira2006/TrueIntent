@@ -1,0 +1,83 @@
+{
+  "classification": {
+    "payload_type": "URL",
+    "normalized_payload": "http://sbi-secure-login-verify.xyz/",
+    "embedded_payload": null,
+    "recognized": true
+  },
+  "analysis_payload": "http://sbi-secure-login-verify.xyz/",
+  "domain": "sbi-secure-login-verify.xyz",
+  "is_punycode": false,
+  "shannon_entropy": 0.0,
+  "domain_age_days": null,
+  "threat_feed_matches": 0,
+  "advisory_report": {
+    "technical_url_analysis": {
+      "status": "UNAVAILABLE",
+      "indicators": [
+        {
+          "code": "CHECK_UNAVAILABLE",
+          "severity": "info",
+          "message": "Lexical URL analysis could not be checked during this scan.",
+          "evidence": {
+            "check": "Lexical URL analysis",
+            "status": "UNAVAILABLE"
+          }
+        },
+        {
+          "code": "INFRASTRUCTURE_UNAVAILABLE",
+          "severity": "info",
+          "message": "Domain and DNS checks could not be completed.",
+          "evidence": {
+            "status": "UNAVAILABLE"
+          }
+        },
+        {
+          "code": "THREAT_FEED_UNAVAILABLE",
+          "severity": "info",
+          "message": "Google threat list could not be checked; this does not mean the URL is clear or harmful.",
+          "evidence": {
+            "feed": "Google threat list",
+            "status": "UNAVAILABLE"
+          }
+        },
+        {
+          "code": "THREAT_FEED_UNAVAILABLE",
+          "severity": "info",
+          "message": "VirusTotal could not be checked; this does not mean the URL is clear or harmful.",
+          "evidence": {
+            "feed": "VirusTotal",
+            "status": "UNAVAILABLE"
+          }
+        }
+      ]
+    },
+    "visual_brand_analysis": {
+      "status": "PENDING",
+      "indicators": []
+    },
+    "transaction_context_analysis": {
+      "status": "NOT_APPLICABLE",
+      "indicators": []
+    },
+    "overall_indicator": "INCONCLUSIVE",
+    "signal_vector": {
+      "shannon_entropy": 0.0,
+      "domain_age_days": -1.0,
+      "subdomain_depth": 0,
+      "is_punycode": false,
+      "gsb_match_count": 0,
+      "vt_malicious_count": 0,
+      "upi_collect_request": 0,
+      "upi_prefilled_amount": 0,
+      "payload_is_url": 1,
+      "payload_is_upi": 0,
+      "payload_is_qr_text": 0,
+      "indicator_check_unavailable": 1,
+      "indicator_infrastructure_unavailable": 1,
+      "indicator_threat_feed_unavailable": 1,
+      "infrastructure_domain_age_days": -1.0
+    },
+    "heuristic_score": 0.0
+  }
+}

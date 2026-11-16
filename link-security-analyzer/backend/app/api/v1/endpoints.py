@@ -1,3 +1,4 @@
+
 """Scan submission, polling, and Redis fixed-window rate limiting."""
 
 import logging
@@ -62,12 +63,9 @@ async def _enforce_rate_limit(
     key = f"rate-limit:{route}:{client_ip}:{bucket}"
     try:
         count = int(await client.eval(_RATE_LIMIT_SCRIPT, 1, key, 60))
-    except RedisError as error:
-        logger.warning("rate limiter unavailable (%s)", type(error).__name__)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="The request limit could not be checked.",
-        ) from error
+    except (RedisError, ConnectionError) as error:
+        logger.warning("rate limiter unavailable (%s); failing open", type(error).__name__)
+        return
     if count > limit:
         retry_after = 60 - (now % 60)
         raise HTTPException(
