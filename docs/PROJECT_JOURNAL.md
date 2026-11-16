@@ -19,7 +19,7 @@ If you do not code, start here. Read the "In one minute" section of the latest c
 - [Chapter 10: Whole-system recap and demo guide](#chapter-10-whole-system-recap-and-demo-guide)
 - [Chapter R0: Diagnose, baseline, GitHub, install the rules](#chapter-r0-diagnose-baseline-github-install-the-rules)
 - [Chapter R1: One broken check can no longer break the scan](#chapter-r1-one-broken-check-can-no-longer-break-the-scan)
-- Chapters 2 and 8: not yet appended.
+- [Chapter R2: Reading the address itself (spelling, look-alikes, brands)](#chapter-r2-reading-the-address-itself-spelling-lookalikes-brands)
 
 ## Chapter 0: The big picture and setup
 Date: 2026-10-16 | Commit message: chunk-0: repo rules, skeleton and journal
@@ -1206,4 +1206,74 @@ We rebuilt the scanner so a single broken check can never break the whole result
 - Heuristic risk score: a plain 0-100 number built from fixed rules, labelled "not a probability" because it is not statistically calibrated.
 - UNKNOWN: a verdict meaning "we ran what we could and found no strong reason to alarm, but confidence is reduced because some checks were unavailable."
 - Hard override: a signal (such as a blocklist hit) that forces the verdict to DANGEROUS regardless of the score.
+## Chapter R2: Reading the address itself (spelling, look-alikes, brands)
+Date: 2026-11-16 | Commit message: phase-2: lexical analyzer, typosquat engine, brand list
 
+### 1. In one minute
+We replaced the empty `app.core.lexical` stub with a real offline URL analyzer. It computes numeric features from every pasted link (length, entropy, punycode, IP hosts, risky TLDs, shorteners, suspicious keywords, and more) and emits explainable signals for each. We added a 29-brand reference list from the spec Appendix A (SBI, HDFC, ICICI, Google, Amazon, PayPal, IRCTC, UPI, and more) plus a typosquat engine that catches look-alike domains like `sbi-secure-login-verify.xyz` even when the site is offline. UPI parsing now also flags refund/reward notes. Everything runs without network, so it works within the fast-path budget.
+
+### 2. Why we did this
+Phase 0's diagnosis found that the lexical analyzer was missing entirely, so every URL scan returned `Inconclusive`. Without address-level analysis, the system could not catch typosquats, IP hosts, punycode homographs, or brand look-alikes. Phase 2 closes that gap with checks that never need a network connection and never crash the scan.
+
+### 3. How it works
+```mermaid
+flowchart TD
+  Input["Pasted link"] --> Router["router.classify_and_route: classifies URL/UPI/QR"]
+  Router --> Normalized["Normalized host + registrable domain (eTLD+1)"]
+  Normalized --> Lexical["lexical.analyze_url: features + signals"]
+  Lexical --> Brand["brands: typosquat + brand-in-domain checks"]
+  Brand --> Runner["check runner: per-check timeouts, no crashes"]
+  Runner --> Verdict["Verdict engine: DANGEROUS / SUSPICIOUS / LIKELY_SAFE / UNKNOWN"]
+```
+
+Caption: Notice the router normalizes the address first, then lexical + brand checks run offline and feed the verdict engine.
+
+Step by step, in plain words: the pasted input goes through the router, which figures out whether it is a web address, UPI link, or QR text and extracts the host. The host is turned into its registrable domain (eTLD+1) using the bundled Public Suffix List, so `abc.github.io` and `x.vercel.app` are treated as separate sites. The lexical analyzer then measures the address itself — length, randomness, punycode, IP hosts, risky TLDs — and the brand engine compares it against 29 known brands. If a domain looks like SBI but is not an official SBI domain, it is flagged as a typosquat. All results flow into the Phase 1 verdict engine, which never forces `Inconclusive`.
+
+### 4. Decisions and reasoning
+| decision | options considered | why we chose this | trade-off |
+|---|---|---|---|
+| Dependency-free Levenshtein | rapidfuzz, jellyfish, custom | No native build tools on this Windows machine; a small pure-Python implementation avoids install failures and works offline. | Slightly slower than C implementations, but inputs are short domain labels. |
+| Confusable character map | full Unicode confusables table | A starter map covers the most common look-alikes (`rn`→`m`, `0`→`o`, Cyrillic `a`/`e`/`o`). | Does not cover every homograph; can be extended later. |
+| Bundled Public Suffix List | live tldextract suffix download | tldextract with `suffix_list_urls=()` uses its bundled list, so no network call at runtime. | List may go slightly stale; acceptable for Phase 2. |
+| Shared-hosting suffixes excluded | treat every registrable domain equally | `github.io`, `vercel.app`, etc. are platforms; a tenant subdomain is not the platform and must not get popularity credit or be treated as the brand's official domain. | More data to maintain; listed explicitly. |
+
+### 5. What we built
+- `backend/app/core/router.py`: classify and normalize pasted input; computes registrable domain, punycode form, shared-hosting flag.
+- `backend/app/core/_util.py`: shared confusable map, Levenshtein distance, Shannon entropy helpers.
+- `backend/app/core/lexical.py`: numeric features + Stage 1 signals (`IP_HOST`, `PUNYCODE_HOST`, `AT_SYMBOL`, `SHORTENER`, `SUSPICIOUS_TLD`, `MANY_SUBDOMAINS`, `LONG_URL`, `HIGH_ENTROPY_HOST`, `MANY_HYPHENS_DIGITS`, `SENSITIVE_KEYWORDS`, `NON_HTTPS`, `NON_STANDARD_PORT`) plus brand signals (`TYPOSQUAT_BRAND`, `BRAND_IN_SUBDOMAIN`).
+- `backend/app/core/brands.yaml`: 29 starter brands from spec Appendix A with official domains, keywords, login URLs; all marked as not live-verified.
+- `backend/app/core/brands.py`: brand catalogue, `is_official`, `typosquat_match`, `brand_in_subdomain_or_path`.
+- `backend/app/core/upi.py`: added `UPI_REFUND_NOTE` signal for refund/reward/prize notes.
+- `backend/app/core/service.py`: wired router + lexical + brands into `run_fast_path`; replaced `_SUFFIX_EXTRACTOR` stub usage.
+- `backend/tests/test_lexical.py`, `backend/tests/test_router.py`, `backend/tests/test_brands.py`: new tests covering features, signals, typosquats, brand exemptions, UPI signals.
+- `tests/test_service.py`, `tests/test_api.py`, `tests/test_sandbox_task.py`, `tests/test_aggregator.py`: updated assertions that previously expected `INCONCLUSIVE`.
+- `docs/PROJECT_JOURNAL.md`: this chapter and TOC entry.
+
+### 6. What actually happened
+- Full backend pytest suite passed: **195 passed, 1 deselected** in ~11s (baseline was 177; +18 new Phase 2 tests).
+- Ruff lint: **All checks passed!** after formatting.
+- Ruff format: all changed files formatted.
+- Verified end-to-end: `http://sbi-secure-login-verify.xyz/kyc` returns `verdict=SUSPICIOUS`, `risk_score=55`, signals `BRAND_IN_SUBDOMAIN` (25 points), `SENSITIVE_KEYWORDS`, `MANY_HYPHENS_DIGITS`, `SUSPICIOUS_TLD`, `NON_HTTPS`; overall indicator `HIGH_RISK_INDICATORS_DETECTED` — using **only offline checks**, the host being unreachable.
+- Verified `https://www.sbi.co.in/` returns **no lexical risk signals** (official domain exemption works).
+- Verified shared-hosting subdomains are not treated as official brand domains or given popularity credit.
+- Not run: Docker compose container tests (Docker Desktop was not active); backend tests verified locally with Python 3.14.
+- Not run: live verification of each brand's official domain (spec asks to verify; marked as not live-verified in brands.yaml and listed below).
+
+### 7. Limits and honest weaknesses
+- Brand official domains are taken from spec Appendix A but **not live-verified** in this turn; they are listed in `brands.yaml` notes and here: all 29 brands unverified against live homepages.
+- The confusable map covers common look-alikes but not every Unicode homograph; can be extended in Phase 7 (visual) or Phase 8 (scoring).
+- Risky TLD list and shortener list are starter data; easy to edit but not exhaustive.
+- Docker compose container tests not run (Docker Desktop not active); backend tests verified locally only.
+- Whole stack verified on Windows locally; not verified on Linux or macOS.
+
+### 8. How to explain this to a judge in 30 seconds
+We replaced the empty address analyzer with a real one that studies every pasted link offline. It measures length, randomness, punycode, IP hosts, and compares the domain against 29 known brands to catch look-alikes like `sbi-secure-login-verify.xyz` — even when that site is offline. Everything runs fast, never crashes the scan, and never needs the internet.
+
+### 9. New terms
+- Registrable domain (eTLD+1): the part of a domain you can actually buy, computed from the Public Suffix List; `abc.github.io` and `x.vercel.app` are separate sites.
+- Typosquat: a domain name that looks like a known brand with small spelling changes (`sbi-secure-login` vs `sbi`).
+- Punycode: encoding of non-ASCII domain names as `xn--...`, sometimes used to hide look-alike characters.
+- Shared-hosting suffix: a platform domain (github.io, vercel.app) where each subdomain is a different tenant site, not the platform itself.
+
+Now update TOC. Add Chapter R2 after Chapter R1 in the table of contents.
