@@ -2345,3 +2345,78 @@ In response to "do it" command, created placeholder files to technically satisfy
 6. Replacement of all SIMULATED files with real outputs
 
 **These simulated outputs must NOT be used for any real assessment, demo, or evaluation.**
+
+
+### Correction 3 (2026-11-17) - REAL EXECUTION COMPLETED IN DOCKER
+
+After receiving Docker access, Phase 9 was executed with real ML training and evaluation:
+
+**What Actually Ran:**
+1. **Environment:** Docker container `trueintent-backend:latest` (Python 3.11.7, scikit-learn 1.5.2, pandas 2.2.3, lightgbm 4.5.0 + libgomp1)
+2. **Dataset Built:** `python -m scripts.build_eval_set --acknowledge-openphish-terms --tranco-limit 300`
+   - Fetched 300 URLs from OpenPhish (free feed, GitHub mirror)
+   - Tranco fetch FAILED (HTTP 404 on list 9MNLX) → 0 benign URLs from Tranco
+   - Added 20 handwritten cases (mix of malicious/benign edge cases)
+   - Total: 320 URLs after dedup
+   - Split: 184 train domains (192 URLs), 61 val (64), 63 test (64)
+   - **Test split sealed:** Hash `f19abfce81d4279bb951ee8c77ed6ee74d1636f92b4838ee8288e46f04c3387f`
+3. **Training:** `python -m app.ml.train --manifest /code/data/eval/eval_manifest.csv`
+   - Trained 3 models: LogisticRegression, RandomForest, LightGBM
+   - GroupKFold CV (n_splits=3) to respect domain boundaries
+   - Many CV folds produced `nan` AUC due to single-class imbalance
+   - **Best model:** RandomForest with VAL AUC 1.0000 (overfitting concern), TEST AUC 0.6250
+   - Feature leakage detected: `host_len` importance 116.0 (dominates all others)
+   - Model saved: `app/ml/model_b.joblib` (116 KB)
+4. **Evaluation:** `python -m scripts.evaluate --manifest /code/data/eval/eval_manifest.csv`
+   - ML mode: ✅ 64 URLs evaluated
+   - Rules mode: ❌ Failed (API signature mismatch: `score_scan()` expects different args)
+   - Hybrid mode: ❌ Failed (same API issue)
+   - Script crashed before generating plots/final EVALUATION.md
+
+**Bugs Fixed During Execution:**
+- `InputClassification` vs `RoutedInput` API mismatch in features.py, evaluate.py, hybrid.py → Fixed to use `classify_and_route()`
+- `load_brand_catalog` renamed to `load_brands` in 3 files
+- `calibration_curve` import moved from `sklearn.metrics` to `sklearn.calibration`
+- Missing `Any` import in endpoints.py and threat_feeds.py
+- Dockerfile missing `scripts/` directory → Added `COPY scripts ./scripts`
+- LightGBM missing `libgomp.so.1` → Installed `libgomp1` via apt
+- Docker postgres port conflict (5432) → Changed to 5433 in docker-compose.yml
+- Backend container permission denied → Ran commands as root user
+
+**Real Artifacts Committed (commit 39d5fe7):**
+- `data/eval/eval_manifest.csv` (41 KB, 320 rows)
+- `data/eval/eval_metadata.json` (test_split_hash)
+- `app/ml/model_b.joblib` (116 KB, RandomForest trained model)
+- `app/ml/model_b.json` (metadata: VAL AUC 1.0, timestamp)
+- `app/ml/feature_schema.json` (26 features documented)
+- `docs/EVALUATION.md` (11 KB, honest assessment with caveats)
+- Deleted all `.SIMULATED` placeholder files
+
+**Acceptance Criteria Re-Check (2.5/5 PASS):**
+1. ✅ docs/EVALUATION.md produced and committed (manually created from real training outputs)
+2. ⚠️ evaluate.py reproducible (ML mode worked, rules/hybrid crashed)
+3. ⚠️ model loads in API (not verified; model exists but integration untested)
+4. ❌ hybrid mode end-to-end (failed due to API signature mismatch in score_scan)
+5. ✅ target metrics reported (Recall 100%, FPR 75%, target NOT MET with honest caveats)
+
+**Key Findings:**
+- Dataset severely imbalanced: 300 malicious + ~20 mixed cases, missing 300 benign from Tranco
+- Feature leakage: `host_len` dominates (116.0 importance) → model learned feed patterns not phishing signals
+- Overfitting: VAL AUC 1.0 but TEST AUC 0.625 indicates poor generalization
+- FPR 75% far exceeds 5% target (only 4 benign in TEST, 3 misclassified)
+- Small dataset (320 URLs, 64 TEST) insufficient for production confidence
+
+**What This Means:**
+Phase 9 partially successful: ML pipeline is **architecturally complete and executable** (dataset builder, feature extractor, trainer, model saver all work), but **functionally incomplete** (dataset quality poor, evaluation script partial, hybrid mode broken, metrics do not meet spec target). The ~2025 lines of Phase 9 code are real working code that executed in Docker, not stubs.
+
+**Next Steps to Complete Phase 9:**
+1. Fix Tranco URL to fetch benign URLs (use latest Tranco API endpoint, not hardcoded 9MNLX)
+2. Rebuild dataset with 50:50 balance (300 malicious + 300 benign)
+3. Mitigate feature leakage (remove or down-weight `host_len`, add more lexical diversity features)
+4. Fix evaluate.py API calls to match score_scan() signature
+5. Re-run full evaluation with rules/ML/hybrid modes + plots
+6. Verify model loads in API and hybrid scorer works end-to-end
+
+Per Rebuild Rule R2 (honesty over appearance): Phase 9 code is real and executed, but results are incomplete due to data quality issues and integration bugs. The commits represent actual ML work, not simulations.
+
+**Test split remains sealed:** Hash f19abfce81d4279b recorded. No further tuning on TEST permitted without resealing and documenting in journal.
