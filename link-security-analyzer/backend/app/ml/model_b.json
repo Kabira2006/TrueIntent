@@ -1,5 +1,5 @@
 {
-  "model_name": "random_forest",
+  "model_name": "lightgbm",
   "feature_columns": [
     "url_len",
     "host_len",
@@ -30,25 +30,25 @@
     "tls_age_lt_7"
   ],
   "includes_path_features": false,
-  "val_auc": 1.0,
-  "test_auc": 0.625,
+  "val_auc": 0.9954365079365078,
+  "test_auc": 0.9864864864864864,
   "feature_importances": {
-    "host_len": 0.20261823175534657,
-    "url_len": 0.17064693339616846,
-    "hyphen_count": 0.12464036194079015,
-    "entropy": 0.10849214228342934,
-    "is_https": 0.09669374519651319,
-    "digit_count": 0.08625622754386045,
-    "dot_count": 0.05600348119975479,
-    "subdomain_count": 0.05342753391709275,
-    "tld_risk": 0.04953127443002799,
-    "has_punycode": 0.03234111908289527
+    "url_len": 591.0,
+    "entropy": 403.0,
+    "host_len": 266.0,
+    "digit_count": 260.0,
+    "tld_risk": 166.0,
+    "is_https": 97.0,
+    "dot_count": 67.0,
+    "hyphen_count": 51.0,
+    "keyword_counts": 0.0,
+    "subdomain_count": 0.0
   },
-  "trained_at": "2026-11-17T15:15:21.389063+00:00",
-  "manifest_hash": "7c8ae5034035021b",
+  "trained_at": "2026-11-17T15:38:43.880434+00:00",
+  "manifest_hash": "62ee9b426b93788c",
   "sklearn_version": "1.5.2",
   "all_val_scores": {
-    "random_forest": 1.0,
-    "lightgbm": 0.8968253968253967
+    "random_forest": 0.9930555555555556,
+    "lightgbm": 0.9954365079365078
   }
 }
