@@ -138,6 +138,18 @@ def _parse_target(value: str) -> tuple[str, str, int]:
         )
 
     raw = value.strip()
+    
+    # Check for common non-HTTP schemes early, before parsing
+    # These often don't have :// so would otherwise be treated as hostnames
+    forbidden_scheme_prefixes = (
+        "javascript:", "data:", "mailto:", "file:", "ftp:", "ftps:",
+        "gopher:", "ssh:", "telnet:", "ldap:", "dict:"
+    )
+    if any(raw.lower().startswith(prefix) for prefix in forbidden_scheme_prefixes):
+        raise BlockedTargetError(
+            "UNSUPPORTED_SCHEME", "Only HTTP and HTTPS targets are allowed."
+        )
+    
     if "://" not in raw:
         parsed = urlsplit(f"//{raw}", scheme="https")
         scheme = "https"
@@ -156,7 +168,12 @@ def _parse_target(value: str) -> tuple[str, str, int]:
     if host is None or any(character.isspace() for character in host):
         raise BlockedTargetError("INVALID_TARGET", "The target hostname is invalid.")
     try:
-        port = parsed.port or (443 if scheme == "https" else 80)
+        # parsed.port is None if no port specified, or the parsed integer value
+        # We need to distinguish "no port" from "port 0"
+        if parsed.port is None:
+            port = 443 if scheme == "https" else 80
+        else:
+            port = parsed.port
     except ValueError as error:
         raise BlockedTargetError(
             "INVALID_TARGET", "The target port is invalid."
@@ -172,8 +189,12 @@ def _is_denied_hostname(hostname: str, settings: Settings) -> bool:
         for item in settings.netguard_denylist.split(",")
         if item.strip()
     }
-    return hostname in denied or hostname.endswith(
-        (".localhost", ".internal", ".local")
+    # Also check for localhost-like patterns
+    localhost_patterns = (".localhost", ".localdomain", ".internal", ".local")
+    return (
+        hostname in denied
+        or hostname in ("localhost", "localhost.localdomain")
+        or hostname.endswith(localhost_patterns)
     )
 
 

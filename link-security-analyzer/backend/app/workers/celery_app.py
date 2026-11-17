@@ -1,6 +1,7 @@
 """Celery application for bounded background browser scans."""
 
 from celery import Celery
+from celery.schedules import crontab
 
 from app.config import get_settings
 
@@ -19,4 +20,11 @@ celery_app.conf.update(
     task_time_limit=_settings.sandbox_task_time_limit_seconds,
     task_default_retry_delay=0,
     task_annotations={"app.workers.tasks.sandbox_scan": {"max_retries": 0}},
+    beat_schedule={
+        "cleanup-old-artifacts": {
+            "task": "app.workers.tasks.cleanup_old_artifacts",
+            "schedule": crontab(hour="*/6", minute=0),  # Every 6 hours
+        },
+    },
+    timezone="UTC",
 )
