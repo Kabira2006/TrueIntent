@@ -15,6 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY data ./data
 COPY app ./app
+COPY scripts ./scripts
 
 USER appuser
 

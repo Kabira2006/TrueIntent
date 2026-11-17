@@ -6,6 +6,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
+from typing import Any
 
 import redis.asyncio as redis
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -28,7 +29,7 @@ from app.core.models import Indicator
 from app.core.service import run_fast_path
 from app.db.models import DomainRecord, ScanJob
 from app.db.session import get_db
-from app.workers.tasks import sandbox_scan
+from app.workers.tasks import run_sandbox
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -111,7 +112,7 @@ async def _domain_repository(session: AsyncSession, domain: str) -> DomainRecord
 
 def enqueue_sandbox(scan_id: uuid.UUID) -> None:
     """Queue the isolated browser task without doing browser work in the API."""
-    sandbox_scan.delay(str(scan_id))
+    run_sandbox.delay(str(scan_id))
 
 
 @router.post(
@@ -394,7 +395,7 @@ async def get_health() -> dict[str, object]:
     }
 
 
-@app.get("/api/v1/feeds/status", tags=["health"])
+@router.get("/api/v1/feeds/status", tags=["health"])
 async def get_feeds_status_endpoint() -> dict[str, Any]:
     """Get detailed status of all reputation feeds (Tranco, OpenPhish, URLhaus)."""
     from app.core.reputation import get_feed_status

@@ -5,7 +5,7 @@ import base64
 import hashlib
 import logging
 import time
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import quote
 
 import httpx

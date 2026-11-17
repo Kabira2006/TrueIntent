@@ -1,0 +1,16 @@
+{
+  "created_at": "2026-11-17T15:06:49.385553+00:00",
+  "total_rows": 320,
+  "malicious": 309,
+  "benign": 11,
+  "train": 192,
+  "val": 64,
+  "test": 64,
+  "test_split_hash": "f19abfce81d4279bb951ee8c77ed6ee74d1636f92b4838ee8288e46f04c3387f",
+  "random_seed": 42,
+  "feed_terms": {
+    "openphish": "Community feed: free for personal/academic research; no commercial use; no redistribution without written permission",
+    "urlhaus": "Free for qualifying non-profit; no AI training without written consent; Auth-Key may be required",
+    "tranco": "Free research ranking list; no separate license stated on official site; list ID and attribution retained"
+  }
+}
