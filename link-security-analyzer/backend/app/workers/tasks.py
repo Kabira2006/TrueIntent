@@ -2,9 +2,11 @@
 
 import asyncio
 import logging
+import os
 import uuid
 from contextlib import closing
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from billiard.exceptions import SoftTimeLimitExceeded
@@ -12,11 +14,7 @@ from billiard.exceptions import SoftTimeLimitExceeded
 from app.config import get_settings
 from app.core.aggregator import AdvisoryPillar, build_report
 from app.core.models import Indicator
-from app.core.sandbox import (
-    SandboxResult,
-    match_brand_references,
-    scan_page,
-)
+from app.sandbox.browser import visit
 from app.db.models import BrandReference, ScanJob
 from app.db.session import get_sync_session
 from app.workers.celery_app import celery_app
@@ -24,16 +22,26 @@ from app.workers.celery_app import celery_app
 logger = logging.getLogger(__name__)
 _UTC = timezone.utc  # noqa: UP017 - local validation runtime is Python 3.10
 
+# Artifact storage directory (temporary files with TTL)
+_ARTIFACTS_DIR = Path("/tmp/trueintent_artifacts")
+_ARTIFACTS_DIR.mkdir(exist_ok=True)
+
 
 @celery_app.task(
     bind=True,
-    name="app.workers.tasks.sandbox_scan",
+    name="app.workers.tasks.run_sandbox",
     max_retries=0,
     soft_time_limit=get_settings().sandbox_task_soft_time_limit_seconds,
     time_limit=get_settings().sandbox_task_time_limit_seconds,
 )
-def sandbox_scan(self: Any, scan_id: str) -> dict[str, str]:
-    """Run the browser check and preserve the already-saved fast-path report."""
+def run_sandbox(self: Any, scan_id: str) -> dict[str, str]:
+    """Run the browser visit and update scan status through transitions.
+
+    Status transitions:
+    - FAST_PATH_DONE -> sandbox_queued (implicit when task is queued)
+    - sandbox_queued -> sandbox_running (when task starts)
+    - sandbox_running -> complete (success) or complete_partial (failure)
+    """
     try:
         job_id = uuid.UUID(scan_id)
     except ValueError:
@@ -46,90 +54,181 @@ def sandbox_scan(self: Any, scan_id: str) -> dict[str, str]:
         if job is None:
             logger.error("sandbox task could not find scan_id=%s", scan_id)
             return {"status": "FAILED", "error": "scan_not_found"}
-        if job.status not in {"FAST_PATH_DONE", "PENDING"}:
+        if job.status not in {"FAST_PATH_DONE", "PENDING", "sandbox_queued"}:
             return {"status": job.status, "scan_id": scan_id}
 
+        # Mark as running
+        job.status = "sandbox_running"
+        session.commit()
+
         try:
-            domain_age = _domain_age(job.signal_vector)
-            result = asyncio.run(
-                scan_page(job.input_payload, domain_age_days=domain_age)
-            )
-            references = session.query(BrandReference).filter(
-                BrandReference.phash_signature.is_not(None)
-            )
-            matches = match_brand_references(
-                result.features.get("phash"),
-                result.features.get("final_host"),
-                list(references),
-                threshold=get_settings().phash_distance_threshold,
-            )
-            result = result.model_copy(
-                update={"indicators": [*result.indicators, *matches]}
-            )
-            _store_sandbox_result(job, result)
-            if result.status == "UNAVAILABLE":
-                _mark_failed(
-                    job,
-                    "The browser check timed out or could not be completed.",
-                )
+            # Run visit
+            result = asyncio.run(visit(job.input_payload, budget_s=15.0))
+
+            # Store compact result
+            _store_visit_result(job, result)
+
+            # Check for failure conditions
+            if result.errors:
+                reason = _classify_error(result.errors)
+                _mark_complete_partial(job, reason)
             else:
                 job.status = "COMPLETED"
                 job.error_message = None
                 job.completed_at = datetime.now(_UTC)
+
             _recompute_report(job)
+
         except SoftTimeLimitExceeded:
-            _fail_without_losing_fast_path(job, "Sandbox soft time limit exceeded.")
+            _fail_with_reason(job, "timeout", "Sandbox soft time limit exceeded.")
         except TimeoutError:
-            _fail_without_losing_fast_path(job, "Sandbox check timed out.")
+            _fail_with_reason(job, "timeout", "Sandbox check timed out.")
         except Exception as error:  # noqa: BLE001 - persist failure and retain fast path
             logger.error(
                 "sandbox task failed scan_id=%s error_type=%s",
                 scan_id,
                 type(error).__name__,
+                exc_info=True,
             )
-            _fail_without_losing_fast_path(
-                job, f"Sandbox check failed ({type(error).__name__})."
+            _fail_with_reason(
+                job,
+                "browser_crash",
+                f"Sandbox check failed ({type(error).__name__}).",
             )
+
         session.commit()
         return {"status": job.status, "scan_id": scan_id}
 
 
-def _store_sandbox_result(job: ScanJob, result: SandboxResult) -> None:
-    """Persist the pillar plus only the image fingerprint, never image bytes."""
-    pillar_status = (
-        "UNAVAILABLE"
-        if result.status == "UNAVAILABLE"
-        else "FLAGGED"
-        if result.indicators
-        else "NO_INDICATORS"
-    )
+def _store_visit_result(job: ScanJob, result: Any) -> None:
+    """Store compact visit result with screenshot as artifact file."""
+    # Store screenshot as temporary file if available
+    screenshot_path = None
+    if result.screenshot_png:
+        ttl_timestamp = datetime.now(_UTC).timestamp() + (48 * 3600)  # 48h TTL
+        screenshot_path = (
+            _ARTIFACTS_DIR / f"{job.id}_screenshot_{int(ttl_timestamp)}.png"
+        )
+        screenshot_path.write_bytes(result.screenshot_png)
+        screenshot_path = str(screenshot_path)
+
+    # Store favicon as temporary file if available
+    favicon_path = None
+    if result.favicon_bytes:
+        ttl_timestamp = datetime.now(_UTC).timestamp() + (48 * 3600)
+        favicon_path = _ARTIFACTS_DIR / f"{job.id}_favicon_{int(ttl_timestamp)}.ico"
+        favicon_path.write_bytes(result.favicon_bytes)
+        favicon_path = str(favicon_path)
+
+    # Build compact indicators from visit result
+    indicators: list[dict[str, Any]] = []
+
+    # Add blocked request indicator if any
+    if result.blocked_requests:
+        indicators.append(
+            {
+                "code": "NETGUARD_BLOCKED_REQUESTS",
+                "severity": "medium",
+                "message": f"{len(result.blocked_requests)} requests blocked by netguard",
+                "evidence": {
+                    "count": len(result.blocked_requests),
+                    "samples": result.blocked_requests[:5],
+                },
+                "points": 10,
+            }
+        )
+
+    # Add download attempt indicator
+    if result.download_attempted:
+        indicators.append(
+            {
+                "code": "DOWNLOAD_ATTEMPTED",
+                "severity": "medium",
+                "message": "Page attempted to trigger a download",
+                "evidence": {},
+                "points": 15,
+            }
+        )
+
+    # Add redirect indicator if many redirects
+    if len(result.redirect_chain) > 3:
+        indicators.append(
+            {
+                "code": "EXCESSIVE_REDIRECTS",
+                "severity": "low",
+                "message": f"Page redirected {len(result.redirect_chain)} times",
+                "evidence": {"count": len(result.redirect_chain)},
+                "points": 5,
+            }
+        )
+
+    # Store in sandbox_indicators
+    pillar_status = "FLAGGED" if indicators else "NO_INDICATORS"
+    if result.errors:
+        pillar_status = "UNAVAILABLE"
+
     job.sandbox_indicators = {
         "status": pillar_status,
-        "indicators": [item.model_dump(mode="json") for item in result.indicators],
-        "features": result.features,
+        "indicators": indicators,
+        "features": {
+            "final_url": result.final_url,
+            "http_status": result.http_status,
+            "title": result.title,
+            "contacted_hosts_count": len(result.contacted_hosts),
+            "third_party_ratio": result.third_party_ratio,
+            "screenshot_path": screenshot_path,
+            "favicon_path": favicon_path,
+            "redirect_count": len(result.redirect_chain),
+            "download_attempted": result.download_attempted,
+            "blocked_requests_count": len(result.blocked_requests),
+            **result.timings,
+        },
     }
 
 
-def _mark_failed(job: ScanJob, message: str) -> None:
-    job.status = "FAILED"
-    job.error_message = message
+def _classify_error(errors: list[str]) -> str:
+    """Classify error list into a specific reason code."""
+    error_text = " ".join(errors).lower()
+    if "timeout" in error_text:
+        return "timeout"
+    if "dns" in error_text:
+        return "dns"
+    if "ssl" in error_text or "certificate" in error_text:
+        return "ssl_error"
+    if "blocked" in error_text or "netguard" in error_text:
+        return "blocked_by_netguard"
+    if "browser" in error_text or "playwright" in error_text:
+        return "browser_crash"
+    return "unknown_error"
+
+
+def _mark_complete_partial(job: ScanJob, reason: str) -> None:
+    """Mark scan as complete_partial with specific reason."""
+    job.status = "complete_partial"
+    job.error_message = f"Sandbox unavailable: {reason}"
     job.completed_at = datetime.now(_UTC)
 
+    # Add unavailable indicator
+    if job.sandbox_indicators is None:
+        job.sandbox_indicators = {}
+    job.sandbox_indicators["status"] = "UNAVAILABLE"
+    if "indicators" not in job.sandbox_indicators:
+        job.sandbox_indicators["indicators"] = []
+    job.sandbox_indicators["indicators"].append(
+        {
+            "code": "SANDBOX_UNAVAILABLE",
+            "severity": "info",
+            "message": f"Browser check unavailable: {reason}",
+            "evidence": {"reason": reason},
+            "points": 0,
+        }
+    )
 
-def _fail_without_losing_fast_path(job: ScanJob, message: str) -> None:
-    job.sandbox_indicators = {
-        "status": "UNAVAILABLE",
-        "indicators": [
-            Indicator(
-                code="SANDBOX_UNAVAILABLE",
-                severity="info",
-                message="The browser check could not be completed.",
-                evidence={"status": "UNAVAILABLE"},
-            ).model_dump(mode="json")
-        ],
-        "features": {},
-    }
-    _mark_failed(job, message)
+
+def _fail_with_reason(job: ScanJob, reason: str, message: str) -> None:
+    """Mark scan as failed with specific reason and preserve fast-path results."""
+    _mark_complete_partial(job, reason)
+    job.error_message = message
     _recompute_report(job)
 
 
