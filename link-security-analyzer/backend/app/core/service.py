@@ -27,7 +27,7 @@ from app.core.upi import UpiResult, analyze_upi
 from app.core.verdict import compute_coverage, compute_verdict
 
 logger = logging.getLogger(__name__)
-_CACHE_TTL_SECONDS = 60 * 60
+_CACHE_TTL_SECONDS = 60 * 10  # 10 minutes per Phase 8 spec
 _ResultType = TypeVar("_ResultType")
 
 _BRAND_CATALOG: BrandCatalog | None = None

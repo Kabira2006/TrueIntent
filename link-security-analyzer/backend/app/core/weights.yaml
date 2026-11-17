@@ -1,0 +1,350 @@
+# Weights configuration for signal scoring
+# Phase 8: Rule-based explainable scorer
+# Version: frozen after Phase 8 tuning, before Phase 9 evaluation
+
+version: "1.0"
+
+# Signal weights: id -> {points, severity, reason_template_id}
+# Points: positive = risk increase, negative = trust signal
+# Severity: info | low | medium | high
+# Reason template: references reasons.yaml
+
+signals:
+  # === Lexical signals (Phase 2) ===
+  SUSPICIOUS_TLD:
+    points: 15
+    severity: medium
+    reason: SUSPICIOUS_TLD
+  
+  TYPOSQUAT_BRAND:
+    points: 30
+    severity: high
+    reason: TYPOSQUAT_BRAND
+  
+  BRAND_KEYWORD_IN_SUBDOMAIN:
+    points: 20
+    severity: medium
+    reason: BRAND_KEYWORD_IN_SUBDOMAIN
+  
+  EXCESSIVE_SUBDOMAINS:
+    points: 8
+    severity: low
+    reason: EXCESSIVE_SUBDOMAINS
+  
+  IP_ADDRESS_HOST:
+    points: 25
+    severity: high
+    reason: IP_ADDRESS_HOST
+  
+  PUNYCODE_DOMAIN:
+    points: 12
+    severity: medium
+    reason: PUNYCODE_DOMAIN
+  
+  SUSPICIOUS_PORT:
+    points: 15
+    severity: medium
+    reason: SUSPICIOUS_PORT
+  
+  EXCESSIVE_URL_LENGTH:
+    points: 5
+    severity: low
+    reason: EXCESSIVE_URL_LENGTH
+  
+  URL_SHORTENER:
+    points: 10
+    severity: medium
+    reason: URL_SHORTENER
+  
+  HIGH_ENTROPY:
+    points: 8
+    severity: low
+    reason: HIGH_ENTROPY
+  
+  # === Reputation signals (Phase 3) ===
+  BLOCKLIST_URL_HIT:
+    points: 100  # Hard override to DANGEROUS
+    severity: high
+    reason: BLOCKLIST_URL_HIT
+  
+  BLOCKLIST_DOMAIN_HIT:
+    points: 80
+    severity: high
+    reason: BLOCKLIST_DOMAIN_HIT
+  
+  POPULARITY_TOP_10K:
+    points: -20  # Negative = trust signal
+    severity: info
+    reason: POPULARITY_TOP_10K
+  
+  POPULARITY_TOP_100K:
+    points: -10
+    severity: info
+    reason: POPULARITY_TOP_100K
+  
+  # === Infrastructure signals (Phase 4) ===
+  DOMAIN_AGE_LT_7D:
+    points: 30
+    severity: high
+    reason: DOMAIN_AGE_LT_7D
+  
+  DOMAIN_AGE_LT_30D:
+    points: 20
+    severity: medium
+    reason: DOMAIN_AGE_LT_30D
+  
+  DOMAIN_AGE_LT_180D:
+    points: 10
+    severity: low
+    reason: DOMAIN_AGE_LT_180D
+  
+  DOMAIN_AGE_UNKNOWN:
+    points: 5
+    severity: low
+    reason: DOMAIN_AGE_UNKNOWN
+  
+  NO_MX_RECORDS:
+    points: 8
+    severity: low
+    reason: NO_MX_RECORDS
+  
+  DNS_LOOKUP_FAILED:
+    points: 15
+    severity: medium
+    reason: DNS_LOOKUP_FAILED
+  
+  TLS_CERT_AGE_LT_30D:
+    points: 15
+    severity: medium
+    reason: TLS_CERT_AGE_LT_30D
+  
+  TLS_CERT_MISMATCH:
+    points: 25
+    severity: high
+    reason: TLS_CERT_MISMATCH
+  
+  TLS_UNAVAILABLE:
+    points: 5
+    severity: low
+    reason: TLS_UNAVAILABLE
+  
+  # === External reputation (Phase 4) ===
+  GSB_THREAT:
+    points: 100  # Hard override
+    severity: high
+    reason: GSB_THREAT
+  
+  VT_MALICIOUS_GE3:
+    points: 100  # Hard override
+    severity: high
+    reason: VT_MALICIOUS_GE3
+  
+  VT_SUSPICIOUS_GE2:
+    points: 40
+    severity: high
+    reason: VT_SUSPICIOUS_GE2
+  
+  VT_SUSPICIOUS_1:
+    points: 20
+    severity: medium
+    reason: VT_SUSPICIOUS_1
+  
+  # === Sandbox/DOM signals (Phase 6) ===
+  HAS_PASSWORD_FIELD:
+    points: 5
+    severity: low
+    reason: HAS_PASSWORD_FIELD
+  
+  HAS_CARD_FIELDS:
+    points: 10
+    severity: medium
+    reason: HAS_CARD_FIELDS
+  
+  HAS_UPI_ID_FIELD:
+    points: 10
+    severity: medium
+    reason: HAS_UPI_ID_FIELD
+  
+  HAS_OTP_PIN_FIELD:
+    points: 15
+    severity: medium
+    reason: HAS_OTP_PIN_FIELD
+  
+  FORM_POSTS_CROSS_DOMAIN:
+    points: 30
+    severity: high
+    reason: FORM_POSTS_CROSS_DOMAIN
+  
+  FORM_POSTS_TO_HTTP:
+    points: 20
+    severity: high
+    reason: FORM_POSTS_TO_HTTP
+  
+  FORM_ACTION_EMPTY_OR_JS:
+    points: 8
+    severity: low
+    reason: FORM_ACTION_EMPTY_OR_JS
+  
+  BRAND_TEXT_DOMAIN_MISMATCH:
+    points: 30
+    severity: high
+    reason: BRAND_TEXT_DOMAIN_MISMATCH
+  
+  HIDDEN_IFRAME:
+    points: 15
+    severity: medium
+    reason: HIDDEN_IFRAME
+  
+  AUTO_DOWNLOAD_ATTEMPT:
+    points: 30
+    severity: high
+    reason: AUTO_DOWNLOAD_ATTEMPT
+  
+  META_REFRESH_REDIRECT:
+    points: 8
+    severity: low
+    reason: META_REFRESH_REDIRECT
+  
+  URGENCY_LANGUAGE:
+    points: 10
+    severity: medium
+    reason: URGENCY_LANGUAGE
+  
+  OBFUSCATED_JS:
+    points: 8
+    severity: low
+    reason: OBFUSCATED_JS
+  
+  RIGHT_CLICK_DISABLED:
+    points: 3
+    severity: info
+    reason: RIGHT_CLICK_DISABLED
+  
+  NO_TRUST_PAGES:
+    points: 8
+    severity: low
+    reason: NO_TRUST_PAGES
+  
+  RECOGNIZED_GATEWAY:
+    points: -10  # Negative = trust signal
+    severity: info
+    reason: RECOGNIZED_GATEWAY
+  
+  PAGE_UNREACHABLE:
+    points: 2
+    severity: info
+    reason: PAGE_UNREACHABLE
+  
+  REDIRECT_CHAIN_CROSS_DOMAIN:
+    points: 10
+    severity: medium
+    reason: REDIRECT_CHAIN_CROSS_DOMAIN
+  
+  # === Visual signals (Phase 7) ===
+  VISUAL_BRAND_MATCH:
+    points: 40
+    severity: high
+    reason: VISUAL_BRAND_MATCH
+  
+  FAVICON_BRAND_MATCH:
+    points: 20
+    severity: medium
+    reason: FAVICON_BRAND_MATCH
+  
+  # === Combination rules (Phases 6, 7) ===
+  CREDENTIAL_OR_PAYMENT_ON_YOUNG_DOMAIN:
+    points: 20
+    severity: high
+    reason: CREDENTIAL_OR_PAYMENT_ON_YOUNG_DOMAIN
+  
+  PAYMENT_WITHOUT_KNOWN_GATEWAY:
+    points: 10
+    severity: medium
+    reason: PAYMENT_WITHOUT_KNOWN_GATEWAY
+  
+  BRAND_LOOKALIKE_ON_FOREIGN_DOMAIN:
+    points: 25
+    severity: high
+    reason: BRAND_LOOKALIKE_ON_FOREIGN_DOMAIN
+  
+  # === UPI signals (Phase 3) ===
+  UPI_COLLECT_REQUEST:
+    points: 30
+    severity: high
+    reason: UPI_COLLECT_REQUEST
+  
+  PREFILLED_AMOUNT:
+    points: 15
+    severity: medium
+    reason: PREFILLED_AMOUNT
+  
+  UPI_PAYEE_NAME_SUSPICIOUS:
+    points: 10
+    severity: medium
+    reason: UPI_PAYEE_NAME_SUSPICIOUS
+  
+  # === Unavailable/info signals (do not contribute to score but appear in evidence) ===
+  CHECK_UNAVAILABLE:
+    points: 0
+    severity: info
+    reason: CHECK_UNAVAILABLE
+  
+  THREAT_FEED_UNAVAILABLE:
+    points: 0
+    severity: info
+    reason: THREAT_FEED_UNAVAILABLE
+  
+  INFRASTRUCTURE_UNAVAILABLE:
+    points: 0
+    severity: info
+    reason: INFRASTRUCTURE_UNAVAILABLE
+
+# Hard override signal IDs (force DANGEROUS verdict regardless of score)
+hard_overrides:
+  - BLOCKLIST_URL_HIT
+  - GSB_THREAT
+  - VT_MALICIOUS_GE3
+
+# Shared hosting domains (never credit popularity)
+# Registrable domain or suffix match
+shared_hosting_suffixes:
+  - github.io
+  - vercel.app
+  - netlify.app
+  - herokuapp.com
+  - blogspot.com
+  - wordpress.com
+  - wixsite.com
+  - weebly.com
+  - tumblr.com
+  - medium.com
+  - substack.com
+  - replit.app
+  - glitch.me
+  - web.app
+  - firebaseapp.com
+  - azurewebsites.net
+  - cloudfront.net
+
+# Verdict thresholds
+thresholds:
+  dangerous: 70    # score >= 70 -> DANGEROUS
+  suspicious: 35   # 35 <= score < 70 -> SUSPICIOUS
+                   # score < 35 with high coverage -> LIKELY_SAFE
+                   # score < 35 with low coverage -> UNKNOWN
+
+# Popularity override policy
+popularity_override:
+  # If domain in top-10k Tranco AND no feed/GSB/VT hit AND no cross-domain form AND no brand mismatch
+  # THEN cap score at this value
+  max_score_for_popular: 20
+  blocks_override:  # signals that prevent popularity override
+    - BLOCKLIST_URL_HIT
+    - BLOCKLIST_DOMAIN_HIT
+    - GSB_THREAT
+    - VT_MALICIOUS_GE3
+    - VT_SUSPICIOUS_GE2
+    - FORM_POSTS_CROSS_DOMAIN
+    - BRAND_TEXT_DOMAIN_MISMATCH
+    - VISUAL_BRAND_MATCH
+    - BRAND_LOOKALIKE_ON_FOREIGN_DOMAIN
