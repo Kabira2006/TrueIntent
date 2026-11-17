@@ -35,10 +35,10 @@ from sklearn.metrics import (
     precision_recall_curve,
     roc_curve,
     roc_auc_score,
-    calibration_curve,
 )
+from sklearn.calibration import calibration_curve
 
-from app.core.brands import load_brand_catalog
+from app.core.brands import load_brands
 from app.core.scoring import score_scan
 from app.core.runner import CheckResult
 from app.ml.hybrid import hybrid_score, load_model
@@ -63,7 +63,7 @@ def run_offline_evaluation(test_df: pd.DataFrame, mode="rules") -> list[dict]:
     """
     logger.info(f"Running offline evaluation in {mode} mode...")
     
-    catalog = load_brand_catalog()
+    catalog = load_brands()
     results_list = []
     
     for idx, row in test_df.iterrows():
@@ -75,10 +75,10 @@ def run_offline_evaluation(test_df: pd.DataFrame, mode="rules") -> list[dict]:
             # Mock check results (offline: lexical + reputation only)
             # In real evaluation, would call actual check functions
             from app.core.lexical import analyze_url
-            from app.core.input_router import classify_input
+            from app.core.router import classify_and_route
             
-            classified = classify_input(url)
-            lexical_result = analyze_url(classified, catalog=catalog)
+            routed = classify_and_route(url)
+            lexical_result = analyze_url(routed, catalog=catalog)
             
             # Build mock check results
             check_results = {

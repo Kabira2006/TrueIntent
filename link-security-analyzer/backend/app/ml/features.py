@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from app.core.brands import BrandCatalog
-from app.core.input_router import classify_input
+from app.core.router import classify_and_route
 from app.core.lexical import analyze_url
 
 logger = logging.getLogger(__name__)
@@ -59,16 +59,14 @@ def extract_features(
     missing = []
 
     # Classify and route input
-    classified = classify_input(url)
-    if classified.payload_type != "URL":
+    routed = classify_and_route(url)
+    if routed.payload_type != "URL":
         # UPI/non-URL: return minimal features
         return {
             "url_len": len(url),
             "is_url": False,
             "missing_features": ["all_url_features"],
         }
-
-    routed = classified  # Reuse RoutedInput
     
     # Extract lexical features (always available, offline)
     lexical_result = analyze_url(routed, catalog=catalog)

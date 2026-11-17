@@ -49,7 +49,7 @@ except ImportError:
     HAVE_LIGHTGBM = False
     warnings.warn("LightGBM not installed; will skip LightGBM model")
 
-from app.core.brands import load_brand_catalog
+from app.core.brands import load_brands
 from app.ml.features import (
     extract_features,
     FEATURE_COLUMNS_HOST_ONLY,
@@ -235,7 +235,7 @@ def main():
     
     # Load data
     df = load_manifest(manifest_path)
-    catalog = load_brand_catalog()
+    catalog = load_brands()
     
     # Extract features
     features_df = extract_features_batch(df, catalog)

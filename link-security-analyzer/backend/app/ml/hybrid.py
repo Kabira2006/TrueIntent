@@ -14,7 +14,7 @@ import pickle
 from pathlib import Path
 from typing import Any, Optional
 
-from app.core.brands import load_brand_catalog
+from app.core.brands import load_brands
 from app.core.scoring import score_scan
 from app.ml.features import extract_features
 
@@ -68,7 +68,7 @@ def predict_ml_probability(url: str, infrastructure_data: Optional[dict[str, Any
     feature_columns = model_package["feature_columns"]
     
     try:
-        catalog = load_brand_catalog()
+        catalog = load_brands()
         features = extract_features(
             url,
             catalog=catalog,
