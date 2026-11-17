@@ -1,0 +1,799 @@
+# Golden test set for Phase 8 scoring
+# 60+ scenario cases with expected verdicts and score ranges
+# Each case defines input signals and expected outputs
+
+version: "1.0"
+description: "Golden test cases for verdict engine"
+
+cases:
+  # === Benign cases ===
+  - id: benign_big_site
+    name: "Benign popular site (Google)"
+    signals:
+      - id: POPULARITY_TOP_10K
+        evidence: {rank: 1}
+    expected_verdict: LIKELY_SAFE
+    expected_score_min: 0
+    expected_score_max: 20
+    expected_top_reason: POPULARITY_TOP_10K
+    notes: "Top site with no risk signals"
+
+  - id: benign_small_old_site
+    name: "Benign small old domain"
+    signals:
+      - id: POPULARITY_TOP_100K
+        evidence: {rank: 50000}
+    domain_age_days: 3650  # 10 years
+    expected_verdict: LIKELY_SAFE
+    expected_score_min: 0
+    expected_score_max: 15
+    notes: "Old domain, moderate popularity"
+
+  - id: new_legit_shop_with_gateway
+    name: "New legitimate e-commerce with recognized gateway"
+    signals:
+      - id: DOMAIN_AGE_LT_30D
+        evidence: {days: 25}
+      - id: HAS_CARD_FIELDS
+        evidence: {}
+      - id: RECOGNIZED_GATEWAY
+        evidence: {gateway_name: "Razorpay"}
+    expected_verdict: LIKELY_SAFE
+    expected_score_min: 0
+    expected_score_max: 30
+    expected_top_reason: DOMAIN_AGE_LT_30D
+    notes: "Young domain but has payment gateway"
+
+  - id: benign_login_page_official
+    name: "Legitimate bank login page on official domain"
+    signals:
+      - id: HAS_PASSWORD_FIELD
+        evidence: {}
+      - id: BRAND_TEXT_DOMAIN_MISMATCH  # Should NOT fire on official domain
+        evidence: {brand_name: "State Bank of India"}
+    domain: "onlinesbi.sbi"
+    expected_verdict: LIKELY_SAFE
+    expected_score_min: 0
+    expected_score_max: 10
+    notes: "Official domain exemption should apply"
+
+  # === Dangerous cases - blocklist hits ===
+  - id: blocklist_url_hit
+    name: "Exact URL on phishing blocklist"
+    signals:
+      - id: BLOCKLIST_URL_HIT
+        evidence: {feed_name: "OpenPhish"}
+    expected_verdict: DANGEROUS
+    expected_score_min: 70
+    expected_score_max: 100
+    expected_top_reason: BLOCKLIST_URL_HIT
+    notes: "Hard override to DANGEROUS"
+
+  - id: gsb_threat
+    name: "Google Safe Browsing threat"
+    signals:
+      - id: GSB_THREAT
+        evidence: {threat_type: "SOCIAL_ENGINEERING"}
+      - id: POPULARITY_TOP_10K  # Even popular -> DANGEROUS
+        evidence: {rank: 5000}
+    expected_verdict: DANGEROUS
+    expected_score_min: 70
+    expected_score_max: 100
+    expected_top_reason: GSB_THREAT
+    notes: "Hard override ignores popularity"
+
+  - id: vt_malicious_ge3
+    name: "VirusTotal 3+ vendors flag as malicious"
+    signals:
+      - id: VT_MALICIOUS_GE3
+        evidence: {malicious_count: 5}
+    expected_verdict: DANGEROUS
+    expected_score_min: 70
+    expected_score_max: 100
+    expected_top_reason: VT_MALICIOUS_GE3
+    notes: "Hard override"
+
+  # === Dangerous cases - phishing patterns ===
+  - id: fresh_typosquat
+    name: "Fresh domain typosquatting SBI"
+    signals:
+      - id: TYPOSQUAT_BRAND
+        evidence: {brand_name: "State Bank of India"}
+      - id: DOMAIN_AGE_LT_7D
+        evidence: {days: 2}
+      - id: HAS_PASSWORD_FIELD
+        evidence: {}
+      - id: FORM_POSTS_CROSS_DOMAIN
+        evidence: {target_domain: "evil.com"}
+    expected_verdict: DANGEROUS
+    expected_score_min: 85
+    expected_score_max: 100
+    expected_top_reason: TYPOSQUAT_BRAND
+    notes: "Multiple high-severity signals"
+
+  - id: brand_lookalike_credentials
+    name: "Visual brand match + password field"
+    signals:
+      - id: VISUAL_BRAND_MATCH
+        evidence: {brand_name: "HDFC Bank", distance: 6}
+      - id: HAS_PASSWORD_FIELD
+        evidence: {}
+      - id: BRAND_LOOKALIKE_ON_FOREIGN_DOMAIN
+        evidence: {brand_name: "HDFC Bank"}
+      - id: DOMAIN_AGE_LT_30D
+        evidence: {days: 15}
+    expected_verdict: DANGEROUS
+    expected_score_min: 90
+    expected_score_max: 100
+    expected_top_reason: BRAND_LOOKALIKE_ON_FOREIGN_DOMAIN
+    notes: "Combination rule triggers"
+
+  - id: shared_hosting_phishing
+    name: "Phishing on shared hosting platform"
+    signals:
+      - id: TYPOSQUAT_BRAND
+        evidence: {brand_name: "PayPal"}
+      - id: HAS_PASSWORD_FIELD
+        evidence: {}
+      - id: SUSPICIOUS_TLD
+        evidence: {tld: "tk"}
+    domain: "paypal-verify.github.io"  # Shared hosting
+    expected_verdict: DANGEROUS
+    expected_score_min: 55
+    expected_score_max: 75
+    notes: "No popularity credit on shared hosting"
+
+  - id: young_domain_card_fields_no_gateway
+    name: "Young domain asking for card without gateway"
+    signals:
+      - id: DOMAIN_AGE_LT_7D
+        evidence: {days: 3}
+      - id: HAS_CARD_FIELDS
+        evidence: {}
+      - id: PAYMENT_WITHOUT_KNOWN_GATEWAY
+        evidence: {}
+      - id: CREDENTIAL_OR_PAYMENT_ON_YOUNG_DOMAIN
+        evidence: {}
+    expected_verdict: DANGEROUS
+    expected_score_min: 75
+    expected_score_max: 100
+    expected_top_reason: DOMAIN_AGE_LT_7D
+    notes: "Combination rules apply"
+
+  # === Suspicious cases ===
+  - id: suspicious_tld_young_domain
+    name: "Suspicious TLD + young domain"
+    signals:
+      - id: SUSPICIOUS_TLD
+        evidence: {tld: "xyz"}
+      - id: DOMAIN_AGE_LT_180D
+        evidence: {days: 90}
+      - id: NO_MX_RECORDS
+        evidence: {}
+    expected_verdict: SUSPICIOUS
+    expected_score_min: 35
+    expected_score_max: 50
+    expected_top_reason: SUSPICIOUS_TLD
+    notes: "Multiple low/medium signals"
+
+  - id: url_shortener
+    name: "URL shortener hiding destination"
+    signals:
+      - id: URL_SHORTENER
+        evidence: {shortener: "bit.ly"}
+      - id: HIGH_ENTROPY
+        evidence: {}
+    expected_verdict: SUSPICIOUS
+    expected_score_min: 35
+    expected_score_max: 25
+    notes: "Shortener + entropy"
+
+  - id: vt_suspicious_1
+    name: "VirusTotal 1 vendor suspicious"
+    signals:
+      - id: VT_SUSPICIOUS_1
+        evidence: {}
+      - id: DOMAIN_AGE_LT_30D
+        evidence: {days: 20}
+    expected_verdict: SUSPICIOUS
+    expected_score_min: 40
+    expected_score_max: 50
+    notes: "External reputation + young domain"
+
+  - id: cross_domain_form_old_domain
+    name: "Cross-domain form on old domain"
+    signals:
+      - id: FORM_POSTS_CROSS_DOMAIN
+        evidence: {target_domain: "analytics.com"}
+      - id: HAS_PASSWORD_FIELD
+        evidence: {}
+    domain_age_days: 2000
+    expected_verdict: SUSPICIOUS
+    expected_score_min: 35
+    expected_score_max: 50
+    notes: "Suspicious behavior on old domain"
+
+  - id: ip_address_host
+    name: "IP address instead of domain"
+    signals:
+      - id: IP_ADDRESS_HOST
+        evidence: {ip: "192.0.2.1"}
+      - id: TLS_UNAVAILABLE
+        evidence: {}
+    expected_verdict: SUSPICIOUS
+    expected_score_min: 30
+    expected_score_max: 40
+    notes: "IP + no HTTPS"
+
+  # === UPI cases ===
+  - id: upi_collect_refund
+    name: "UPI collect request claiming refund"
+    signals:
+      - id: UPI_COLLECT_REQUEST
+        evidence: {}
+      - id: PREFILLED_AMOUNT
+        evidence: {amount: "5000"}
+    expected_verdict: DANGEROUS
+    expected_score_min: 45
+    expected_score_max: 60
+    expected_top_reason: UPI_COLLECT_REQUEST
+    notes: "Collect is payment request, not refund"
+
+  - id: upi_suspicious_payee
+    name: "UPI with suspicious payee name"
+    signals:
+      - id: UPI_COLLECT_REQUEST
+        evidence: {}
+      - id: UPI_PAYEE_NAME_SUSPICIOUS
+        evidence: {payee_name: "REFUND@paytm"}
+    expected_verdict: SUSPICIOUS
+    expected_score_min: 40
+    expected_score_max: 50
+    notes: "Suspicious merchant name"
+
+  # === Unknown/limited coverage cases ===
+  - id: all_checks_unavailable
+    name: "All checks unavailable"
+    signals:
+      - id: CHECK_UNAVAILABLE
+        evidence: {}
+      - id: THREAT_FEED_UNAVAILABLE
+        evidence: {}
+      - id: INFRASTRUCTURE_UNAVAILABLE
+        evidence: {}
+    expected_verdict: UNKNOWN
+    expected_score_min: 0
+    expected_score_max: 10
+    notes: "Insufficient coverage"
+
+  - id: sandbox_failed_but_popular
+    name: "Sandbox failed, but site is popular"
+    signals:
+      - id: POPULARITY_TOP_10K
+        evidence: {rank: 100}
+      - id: PAGE_UNREACHABLE
+        evidence: {}
+    expected_verdict: LIKELY_SAFE
+    expected_score_min: 0
+    expected_score_max: 20
+    notes: "Popularity compensates for sandbox failure"
+
+  - id: offline_typosquat
+    name: "Typosquat but domain doesn't resolve"
+    signals:
+      - id: TYPOSQUAT_BRAND
+        evidence: {brand_name: "Amazon"}
+      - id: DNS_LOOKUP_FAILED
+        evidence: {}
+      - id: SUSPICIOUS_TLD
+        evidence: {tld: "tk"}
+    expected_verdict: SUSPICIOUS
+    expected_score_min: 60
+    expected_score_max: 75
+    notes: "Offline but still suspicious"
+
+  # === Popularity override cases ===
+  - id: popular_no_bad_signals
+    name: "Top-10k domain with no risk signals"
+    signals:
+      - id: POPULARITY_TOP_10K
+        evidence: {rank: 50}
+      - id: HAS_PASSWORD_FIELD
+        evidence: {}
+    expected_verdict: LIKELY_SAFE
+    expected_score_min: 0
+    expected_score_max: 20
+    notes: "Popularity override caps score at 20"
+
+  - id: popular_with_bad_signal
+    name: "Top-10k but has cross-domain form"
+    signals:
+      - id: POPULARITY_TOP_10K
+        evidence: {rank: 100}
+      - id: FORM_POSTS_CROSS_DOMAIN
+        evidence: {target_domain: "evil.com"}
+      - id: HAS_PASSWORD_FIELD
+        evidence: {}
+    expected_verdict: SUSPICIOUS
+    expected_score_min: 35
+    expected_score_max: 50
+    notes: "Popularity override blocked by bad signal"
+
+  # === Edge cases ===
+  - id: punycode_domain
+    name: "Punycode domain (IDN homograph)"
+    signals:
+      - id: PUNYCODE_DOMAIN
+        evidence: {}
+      - id: TYPOSQUAT_BRAND
+        evidence: {brand_name: "Google"}
+    expected_verdict: SUSPICIOUS
+    expected_score_min: 42
+    expected_score_max: 55
+    notes: "IDN homograph attack"
+
+  - id: excessive_subdomains
+    name: "Excessive subdomain depth"
+    signals:
+      - id: EXCESSIVE_SUBDOMAINS
+        evidence: {subdomain_count: 5}
+      - id: HIGH_ENTROPY
+        evidence: {}
+    expected_verdict: SUSPICIOUS
+    expected_score_min: 16
+    expected_score_max: 25
+    notes: "Obfuscation attempt"
+
+  - id: urgency_language
+    name: "Urgency language on page"
+    signals:
+      - id: URGENCY_LANGUAGE
+        evidence: {}
+      - id: HAS_PASSWORD_FIELD
+        evidence: {}
+      - id: DOMAIN_AGE_LT_30D
+        evidence: {days: 10}
+    expected_verdict: SUSPICIOUS
+    expected_score_min: 35
+    expected_score_max: 50
+    notes: "Psychological manipulation"
+
+  - id: hidden_iframe
+    name: "Hidden iframe with cross-domain content"
+    signals:
+      - id: HIDDEN_IFRAME
+        evidence: {}
+      - id: FORM_POSTS_CROSS_DOMAIN
+        evidence: {target_domain: "tracker.com"}
+    expected_verdict: SUSPICIOUS
+    expected_score_min: 45
+    expected_score_max: 60
+    notes: "Possible data exfiltration"
+
+  - id: auto_download
+    name: "Automatic download attempt"
+    signals:
+      - id: AUTO_DOWNLOAD_ATTEMPT
+        evidence: {}
+      - id: SUSPICIOUS_TLD
+        evidence: {tld: "xyz"}
+    expected_verdict: SUSPICIOUS
+    expected_score_min: 45
+    expected_score_max: 60
+    notes: "Malware delivery attempt"
+
+  # === Additional tricky cases ===
+  - id: brand_keyword_subdomain
+    name: "Brand name in subdomain"
+    signals:
+      - id: BRAND_KEYWORD_IN_SUBDOMAIN
+        evidence: {brand_name: "paypal"}
+      - id: SUSPICIOUS_TLD
+        evidence: {tld: "com"}
+      - id: HAS_PASSWORD_FIELD
+        evidence: {}
+    expected_verdict: SUSPICIOUS
+    expected_score_min: 45
+    expected_score_max: 60
+    notes: "paypal.evil.com pattern"
+
+  - id: redirect_chain
+    name: "Multiple cross-domain redirects"
+    signals:
+      - id: REDIRECT_CHAIN_CROSS_DOMAIN
+        evidence: {redirect_count: 4}
+      - id: URL_SHORTENER
+        evidence: {shortener: "t.co"}
+    expected_verdict: SUSPICIOUS
+    expected_score_min: 20
+    expected_score_max: 35
+    notes: "Redirect obfuscation"
+
+  - id: form_posts_to_http
+    name: "Form posts password to HTTP"
+    signals:
+      - id: FORM_POSTS_TO_HTTP
+        evidence: {}
+      - id: HAS_PASSWORD_FIELD
+        evidence: {}
+    expected_verdict: SUSPICIOUS
+    expected_score_min: 25
+    expected_score_max: 40
+    notes: "Credentials sent unencrypted"
+
+  - id: tls_cert_mismatch
+    name: "TLS certificate mismatch"
+    signals:
+      - id: TLS_CERT_MISMATCH
+        evidence: {}
+      - id: HAS_PASSWORD_FIELD
+        evidence: {}
+    expected_verdict: SUSPICIOUS
+    expected_score_min: 30
+    expected_score_max: 45
+    notes: "Certificate doesn't match domain"
+
+  - id: no_trust_pages
+    name: "No contact/privacy pages"
+    signals:
+      - id: NO_TRUST_PAGES
+        evidence: {}
+      - id: HAS_CARD_FIELDS
+        evidence: {}
+      - id: DOMAIN_AGE_LT_30D
+        evidence: {days: 15}
+    expected_verdict: SUSPICIOUS
+    expected_score_min: 38
+    expected_score_max: 55
+    notes: "Missing trust indicators"
+
+  - id: obfuscated_js
+    name: "Obfuscated JavaScript"
+    signals:
+      - id: OBFUSCATED_JS
+        evidence: {}
+      - id: FORM_ACTION_EMPTY_OR_JS
+        evidence: {}
+    expected_verdict: LIKELY_SAFE  # Below suspicious threshold
+    expected_score_min: 16
+    expected_score_max: 25
+    notes: "Low-weight signals, needs context"
+
+  - id: favicon_match_only
+    name: "Favicon matches but page doesn't"
+    signals:
+      - id: FAVICON_BRAND_MATCH
+        evidence: {brand_name: "Amazon"}
+      - id: DOMAIN_AGE_LT_180D
+        evidence: {days: 120}
+    expected_verdict: SUSPICIOUS
+    expected_score_min: 30
+    expected_score_max: 45
+    notes: "Favicon copied but not full brand match"
+
+  - id: blocklist_domain_hit
+    name: "Domain on blocklist"
+    signals:
+      - id: BLOCKLIST_DOMAIN_HIT
+        evidence: {feed_name: "URLhaus"}
+    expected_verdict: DANGEROUS
+    expected_score_min: 80
+    expected_score_max: 100
+    expected_top_reason: BLOCKLIST_DOMAIN_HIT
+    notes: "Domain-level blocklist hit"
+
+  - id: vt_suspicious_ge2
+    name: "VirusTotal 2+ suspicious"
+    signals:
+      - id: VT_SUSPICIOUS_GE2
+        evidence: {suspicious_count: 3}
+      - id: DOMAIN_AGE_LT_30D
+        evidence: {days: 5}
+    expected_verdict: DANGEROUS
+    expected_score_min: 70
+    expected_score_max: 85
+    notes: "Multiple vendors flag + young domain"
+
+  - id: right_click_disabled
+    name: "Right-click disabled (weak signal)"
+    signals:
+      - id: RIGHT_CLICK_DISABLED
+        evidence: {}
+      - id: HAS_PASSWORD_FIELD
+        evidence: {}
+    expected_verdict: LIKELY_SAFE
+    expected_score_min: 8
+    expected_score_max: 15
+    notes: "Very low weight, needs other signals"
+
+  - id: meta_refresh_redirect
+    name: "Meta refresh redirect"
+    signals:
+      - id: META_REFRESH_REDIRECT
+        evidence: {target_domain: "ads.example.com"}
+      - id: SUSPICIOUS_TLD
+        evidence: {tld: "info"}
+    expected_verdict: SUSPICIOUS
+    expected_score_min: 23
+    expected_score_max: 35
+    notes: "Redirect + suspicious TLD"
+
+  - id: suspicious_port
+    name: "Unusual port number"
+    signals:
+      - id: SUSPICIOUS_PORT
+        evidence: {port: 8080}
+      - id: TLS_UNAVAILABLE
+        evidence: {}
+    expected_verdict: SUSPICIOUS
+    expected_score_min: 20
+    expected_score_max: 35
+    notes: "Non-standard port + no HTTPS"
+
+  - id: excessive_url_length
+    name: "Very long URL"
+    signals:
+      - id: EXCESSIVE_URL_LENGTH
+        evidence: {length: 350}
+      - id: HIGH_ENTROPY
+        evidence: {}
+    expected_verdict: LIKELY_SAFE
+    expected_score_min: 13
+    expected_score_max: 20
+    notes: "Low-weight signals"
+
+  # === Combination rule cases ===
+  - id: credential_young_domain_combo
+    name: "Credential on young domain (combo rule)"
+    signals:
+      - id: HAS_PASSWORD_FIELD
+        evidence: {}
+      - id: DOMAIN_AGE_LT_30D
+        evidence: {days: 10}
+      - id: CREDENTIAL_OR_PAYMENT_ON_YOUNG_DOMAIN
+        evidence: {}
+    expected_verdict: SUSPICIOUS
+    expected_score_min: 45
+    expected_score_max: 60
+    notes: "Combination rule triggers"
+
+  - id: payment_no_gateway_combo
+    name: "Payment without gateway (combo rule)"
+    signals:
+      - id: HAS_CARD_FIELDS
+        evidence: {}
+      - id: PAYMENT_WITHOUT_KNOWN_GATEWAY
+        evidence: {}
+      - id: DOMAIN_AGE_LT_180D
+        evidence: {days: 90}
+    expected_verdict: SUSPICIOUS
+    expected_score_min: 30
+    expected_score_max: 45
+    notes: "Card fields without recognized processor"
+
+  # === Mixed positive/negative signals ===
+  - id: popular_with_login
+    name: "Popular site with login (benign)"
+    signals:
+      - id: POPULARITY_TOP_10K
+        evidence: {rank: 500}
+      - id: HAS_PASSWORD_FIELD
+        evidence: {}
+      - id: HAS_OTP_PIN_FIELD
+        evidence: {}
+    expected_verdict: LIKELY_SAFE
+    expected_score_min: 0
+    expected_score_max: 20
+    notes: "Popularity override applies"
+
+  - id: gateway_recognized
+    name: "Recognized payment gateway (negative signal)"
+    signals:
+      - id: HAS_CARD_FIELDS
+        evidence: {}
+      - id: RECOGNIZED_GATEWAY
+        evidence: {gateway_name: "Stripe"}
+      - id: DOMAIN_AGE_LT_180D
+        evidence: {days: 150}
+    expected_verdict: LIKELY_SAFE
+    expected_score_min: 0
+    expected_score_max: 20
+    notes: "Gateway reduces payment risk"
+
+  # === Domain age variations ===
+  - id: domain_age_unknown
+    name: "Domain age cannot be verified"
+    signals:
+      - id: DOMAIN_AGE_UNKNOWN
+        evidence: {}
+      - id: HAS_PASSWORD_FIELD
+        evidence: {}
+    expected_verdict: LIKELY_SAFE  # Below suspicious threshold
+    expected_score_min: 10
+    expected_score_max: 20
+    notes: "Unknown age is weak signal"
+
+  - id: tls_cert_young
+    name: "TLS certificate less than 30 days old"
+    signals:
+      - id: TLS_CERT_AGE_LT_30D
+        evidence: {days: 10}
+      - id: DOMAIN_AGE_LT_30D
+        evidence: {days: 12}
+    expected_verdict: SUSPICIOUS
+    expected_score_min: 35
+    expected_score_max: 50
+    notes: "Both domain and cert are very new"
+
+  # === Indian context cases ===
+  - id: indian_bank_typosquat
+    name: "Indian bank typosquat (sbi-secure)"
+    signals:
+      - id: TYPOSQUAT_BRAND
+        evidence: {brand_name: "State Bank of India"}
+      - id: SUSPICIOUS_TLD
+        evidence: {tld: "xyz"}
+      - id: BRAND_TEXT_DOMAIN_MISMATCH
+        evidence: {brand_name: "State Bank of India"}
+    expected_verdict: DANGEROUS
+    expected_score_min: 75
+    expected_score_max: 95
+    notes: "Common Indian phishing pattern"
+
+  - id: icici_lookalike
+    name: "ICICI Bank lookalike"
+    signals:
+      - id: BRAND_KEYWORD_IN_SUBDOMAIN
+        evidence: {brand_name: "icici"}
+      - id: HAS_PASSWORD_FIELD
+        evidence: {}
+      - id: DOMAIN_AGE_LT_7D
+        evidence: {days: 2}
+    expected_verdict: DANGEROUS
+    expected_score_min: 55
+    expected_score_max: 75
+    notes: "Brand keyword + password + fresh domain"
+
+  - id: paytm_upi_collect
+    name: "Fake Paytm UPI collect"
+    signals:
+      - id: UPI_COLLECT_REQUEST
+        evidence: {}
+      - id: BRAND_TEXT_DOMAIN_MISMATCH
+        evidence: {brand_name: "Paytm"}
+      - id: PREFILLED_AMOUNT
+        evidence: {amount: "1"}
+    expected_verdict: DANGEROUS
+    expected_score_min: 60
+    expected_score_max: 80
+    notes: "UPI + brand impersonation"
+
+  # === Edge score boundaries ===
+  - id: score_exactly_35
+    name: "Score exactly at suspicious threshold"
+    signals:
+      - id: SUSPICIOUS_TLD
+        evidence: {tld: "xyz"}
+      - id: DOMAIN_AGE_LT_30D
+        evidence: {days: 25}
+    expected_verdict: SUSPICIOUS
+    expected_score_min: 35
+    expected_score_max: 35
+    notes: "Boundary test"
+
+  - id: score_exactly_70
+    name: "Score exactly at dangerous threshold"
+    signals:
+      - id: TYPOSQUAT_BRAND
+        evidence: {brand_name: "Google"}
+      - id: VISUAL_BRAND_MATCH
+        evidence: {brand_name: "Google", distance: 5}
+    expected_verdict: DANGEROUS
+    expected_score_min: 70
+    expected_score_max: 70
+    notes: "Boundary test"
+
+  - id: negative_signals_only
+    name: "Only negative (trust) signals"
+    signals:
+      - id: POPULARITY_TOP_10K
+        evidence: {rank: 10}
+      - id: RECOGNIZED_GATEWAY
+        evidence: {gateway_name: "PayPal"}
+    expected_verdict: LIKELY_SAFE
+    expected_score_min: 0
+    expected_score_max: 0  # Negative signals, clamped at 0
+    notes: "Trust signals reduce score"
+
+  # === Additional cases to reach 60+ ===
+  - id: mixed_signals_boundary
+    name: "Mixed signals near boundary"
+    signals:
+      - id: DOMAIN_AGE_LT_30D
+        evidence: {days: 28}
+      - id: HAS_PASSWORD_FIELD
+        evidence: {}
+      - id: SUSPICIOUS_TLD
+        evidence: {tld: "info"}
+    expected_verdict: SUSPICIOUS
+    expected_score_min: 40
+    expected_score_max: 50
+    notes: "Multiple medium signals"
+
+  - id: benign_github_page
+    name: "Benign GitHub pages site"
+    signals:
+      - id: HAS_PASSWORD_FIELD
+        evidence: {}
+    domain: "username.github.io"
+    expected_verdict: LIKELY_SAFE
+    expected_score_min: 5
+    expected_score_max: 15
+    notes: "Personal site on shared hosting"
+
+  - id: tls_cert_age_combined
+    name: "Young TLS cert + young domain"
+    signals:
+      - id: TLS_CERT_AGE_LT_30D
+        evidence: {days: 5}
+      - id: DOMAIN_AGE_LT_7D
+        evidence: {days: 6}
+      - id: HAS_CARD_FIELDS
+        evidence: {}
+    expected_verdict: DANGEROUS
+    expected_score_min: 55
+    expected_score_max: 75
+    notes: "Both cert and domain very new"
+
+  - id: page_unreachable_typosquat
+    name: "Typosquat but page unreachable"
+    signals:
+      - id: TYPOSQUAT_BRAND
+        evidence: {brand_name: "Flipkart"}
+      - id: PAGE_UNREACHABLE
+        evidence: {}
+      - id: DOMAIN_AGE_LT_7D
+        evidence: {days: 1}
+    expected_verdict: DANGEROUS
+    expected_score_min: 52
+    expected_score_max: 70
+    notes: "Offline but still dangerous based on lexical"
+
+  - id: multiple_negative_signals
+    name: "Multiple trust indicators"
+    signals:
+      - id: POPULARITY_TOP_10K
+        evidence: {rank: 5}
+      - id: RECOGNIZED_GATEWAY
+        evidence: {gateway_name: "PayPal"}
+      - id: HAS_CARD_FIELDS
+        evidence: {}
+    expected_verdict: LIKELY_SAFE
+    expected_score_min: 0
+    expected_score_max: 10
+    notes: "Strong trust signals outweigh card field"
+
+  - id: form_action_empty_js
+    name: "Form with JavaScript action"
+    signals:
+      - id: FORM_ACTION_EMPTY_OR_JS
+        evidence: {}
+      - id: HAS_PASSWORD_FIELD
+        evidence: {}
+      - id: OBFUSCATED_JS
+        evidence: {}
+    expected_verdict: SUSPICIOUS
+    expected_score_min: 21
+    expected_score_max: 35
+    notes: "JS form submission + obfuscation"
+
+  - id: brand_text_mismatch_only
+    name: "Brand text mismatch without other signals"
+    signals:
+      - id: BRAND_TEXT_DOMAIN_MISMATCH
+        evidence: {brand_name: "Amazon"}
+    domain_age_days: 500
+    expected_verdict: SUSPICIOUS
+    expected_score_min: 30
+    expected_score_max: 40
+    notes: "Brand impersonation on older domain"

@@ -1,0 +1,334 @@
+# Plain-language reason templates
+# Phase 8: Explainable verdict reasons
+# Language: English (Hindi/Marathi keys reserved for future translations)
+
+version: "1.0"
+
+reasons:
+  # === Lexical ===
+  SUSPICIOUS_TLD:
+    en: "The domain uses a high-risk extension ({tld}) often associated with phishing."
+    hindi: ""  # Reserved for translation
+    marathi: ""
+  
+  TYPOSQUAT_BRAND:
+    en: "The address imitates {brand_name} but is not an official {brand_name} domain."
+    hindi: ""
+    marathi: ""
+  
+  BRAND_KEYWORD_IN_SUBDOMAIN:
+    en: "The address uses '{brand_name}' in the subdomain but is not an official domain."
+    hindi: ""
+    marathi: ""
+  
+  EXCESSIVE_SUBDOMAINS:
+    en: "The address has {subdomain_count} subdomains, which is unusual and may indicate obfuscation."
+    hindi: ""
+    marathi: ""
+  
+  IP_ADDRESS_HOST:
+    en: "The address uses an IP address ({ip}) instead of a domain name."
+    hindi: ""
+    marathi: ""
+  
+  PUNYCODE_DOMAIN:
+    en: "The domain contains non-Latin characters that may be used to imitate another site."
+    hindi: ""
+    marathi: ""
+  
+  SUSPICIOUS_PORT:
+    en: "The address uses an unusual port ({port}) which may indicate a non-standard service."
+    hindi: ""
+    marathi: ""
+  
+  EXCESSIVE_URL_LENGTH:
+    en: "The address is unusually long ({length} characters), which may indicate obfuscation."
+    hindi: ""
+    marathi: ""
+  
+  URL_SHORTENER:
+    en: "The address uses a URL shortener ({shortener}), hiding the actual destination."
+    hindi: ""
+    marathi: ""
+  
+  HIGH_ENTROPY:
+    en: "The address contains a random-looking string, which may indicate an automatically generated link."
+    hindi: ""
+    marathi: ""
+  
+  # === Reputation ===
+  BLOCKLIST_URL_HIT:
+    en: "This exact address appears on a known phishing blocklist ({feed_name})."
+    hindi: ""
+    marathi: ""
+  
+  BLOCKLIST_DOMAIN_HIT:
+    en: "The domain appears on a known phishing blocklist ({feed_name})."
+    hindi: ""
+    marathi: ""
+  
+  POPULARITY_TOP_10K:
+    en: "The domain is among the 10,000 most visited sites worldwide (rank {rank})."
+    hindi: ""
+    marathi: ""
+  
+  POPULARITY_TOP_100K:
+    en: "The domain is among the 100,000 most visited sites worldwide (rank {rank})."
+    hindi: ""
+    marathi: ""
+  
+  # === Infrastructure ===
+  DOMAIN_AGE_LT_7D:
+    en: "The domain was registered {days} days ago. Very new domains are often used for scams."
+    hindi: ""
+    marathi: ""
+  
+  DOMAIN_AGE_LT_30D:
+    en: "The domain was registered {days} days ago. New domains carry higher risk."
+    hindi: ""
+    marathi: ""
+  
+  DOMAIN_AGE_LT_180D:
+    en: "The domain was registered {days} days ago."
+    hindi: ""
+    marathi: ""
+  
+  DOMAIN_AGE_UNKNOWN:
+    en: "The domain registration date could not be verified."
+    hindi: ""
+    marathi: ""
+  
+  NO_MX_RECORDS:
+    en: "The domain has no email (MX) records, which is unusual for legitimate sites."
+    hindi: ""
+    marathi: ""
+  
+  DNS_LOOKUP_FAILED:
+    en: "The domain does not resolve to an IP address. It may be inactive or fake."
+    hindi: ""
+    marathi: ""
+  
+  TLS_CERT_AGE_LT_30D:
+    en: "The security certificate was issued {days} days ago. Very new certificates may indicate a temporary setup."
+    hindi: ""
+    marathi: ""
+  
+  TLS_CERT_MISMATCH:
+    en: "The security certificate does not match the domain name."
+    hindi: ""
+    marathi: ""
+  
+  TLS_UNAVAILABLE:
+    en: "The site does not use HTTPS encryption."
+    hindi: ""
+    marathi: ""
+  
+  # === External reputation ===
+  GSB_THREAT:
+    en: "Google Safe Browsing flagged this address as {threat_type}."
+    hindi: ""
+    marathi: ""
+  
+  VT_MALICIOUS_GE3:
+    en: "VirusTotal reports {malicious_count} security vendors flagged this address as malicious."
+    hindi: ""
+    marathi: ""
+  
+  VT_SUSPICIOUS_GE2:
+    en: "VirusTotal reports {suspicious_count} security vendors flagged this address as suspicious."
+    hindi: ""
+    marathi: ""
+  
+  VT_SUSPICIOUS_1:
+    en: "VirusTotal reports 1 security vendor flagged this address as suspicious."
+    hindi: ""
+    marathi: ""
+  
+  # === DOM analysis ===
+  HAS_PASSWORD_FIELD:
+    en: "The page asks for a password."
+    hindi: ""
+    marathi: ""
+  
+  HAS_CARD_FIELDS:
+    en: "The page asks for credit card or debit card details."
+    hindi: ""
+    marathi: ""
+  
+  HAS_UPI_ID_FIELD:
+    en: "The page asks for a UPI ID or VPA."
+    hindi: ""
+    marathi: ""
+  
+  HAS_OTP_PIN_FIELD:
+    en: "The page asks for an OTP, PIN, or Aadhaar number."
+    hindi: ""
+    marathi: ""
+  
+  FORM_POSTS_CROSS_DOMAIN:
+    en: "A form on this page sends your information to a different website ({target_domain})."
+    hindi: ""
+    marathi: ""
+  
+  FORM_POSTS_TO_HTTP:
+    en: "A form on this page sends your information without encryption (HTTP)."
+    hindi: ""
+    marathi: ""
+  
+  FORM_ACTION_EMPTY_OR_JS:
+    en: "A form on this page uses JavaScript to submit data, which can hide the actual destination."
+    hindi: ""
+    marathi: ""
+  
+  BRAND_TEXT_DOMAIN_MISMATCH:
+    en: "The page claims to be {brand_name} but the domain is not an official {brand_name} site."
+    hindi: ""
+    marathi: ""
+  
+  HIDDEN_IFRAME:
+    en: "The page contains a hidden frame that may load content from another site."
+    hindi: ""
+    marathi: ""
+  
+  AUTO_DOWNLOAD_ATTEMPT:
+    en: "The page attempted to automatically download a file."
+    hindi: ""
+    marathi: ""
+  
+  META_REFRESH_REDIRECT:
+    en: "The page automatically redirects to {target_domain}."
+    hindi: ""
+    marathi: ""
+  
+  URGENCY_LANGUAGE:
+    en: "The page uses urgent language like 'account blocked' or 'act within 24 hours' to pressure you."
+    hindi: ""
+    marathi: ""
+  
+  OBFUSCATED_JS:
+    en: "The page contains deliberately obscured JavaScript code."
+    hindi: ""
+    marathi: ""
+  
+  RIGHT_CLICK_DISABLED:
+    en: "The page blocks right-click, which is a technique to prevent inspection."
+    hindi: ""
+    marathi: ""
+  
+  NO_TRUST_PAGES:
+    en: "The page has no links to Contact, About, Privacy Policy, or Terms of Service."
+    hindi: ""
+    marathi: ""
+  
+  RECOGNIZED_GATEWAY:
+    en: "The page uses a recognized payment gateway ({gateway_name})."
+    hindi: ""
+    marathi: ""
+  
+  PAGE_UNREACHABLE:
+    en: "The page could not be loaded. It may be offline or blocking our scanner."
+    hindi: ""
+    marathi: ""
+  
+  REDIRECT_CHAIN_CROSS_DOMAIN:
+    en: "The address redirects through {redirect_count} different domains before reaching the final page."
+    hindi: ""
+    marathi: ""
+  
+  # === Visual ===
+  VISUAL_BRAND_MATCH:
+    en: "The page layout resembles {brand_name} (visual similarity: {distance} bits)."
+    hindi: ""
+    marathi: ""
+  
+  FAVICON_BRAND_MATCH:
+    en: "The page icon (favicon) matches {brand_name}."
+    hindi: ""
+    marathi: ""
+  
+  # === Combination rules ===
+  CREDENTIAL_OR_PAYMENT_ON_YOUNG_DOMAIN:
+    en: "The page asks for sensitive information but the domain is less than 30 days old."
+    hindi: ""
+    marathi: ""
+  
+  PAYMENT_WITHOUT_KNOWN_GATEWAY:
+    en: "The page asks for payment details but does not use a recognized payment gateway."
+    hindi: ""
+    marathi: ""
+  
+  BRAND_LOOKALIKE_ON_FOREIGN_DOMAIN:
+    en: "The page impersonates {brand_name} and asks for credentials, but is hosted on a different domain."
+    hindi: ""
+    marathi: ""
+  
+  # === UPI ===
+  UPI_COLLECT_REQUEST:
+    en: "This is a UPI collect request. You will be asked to approve a payment, not receive money."
+    hindi: ""
+    marathi: ""
+  
+  PREFILLED_AMOUNT:
+    en: "The payment amount ({amount}) is pre-filled. Verify this is correct before approving."
+    hindi: ""
+    marathi: ""
+  
+  UPI_PAYEE_NAME_SUSPICIOUS:
+    en: "The payee name '{payee_name}' may not match the organization you expect."
+    hindi: ""
+    marathi: ""
+  
+  # === Info/unavailable ===
+  CHECK_UNAVAILABLE:
+    en: "Some checks could not run. The verdict is based on reduced information."
+    hindi: ""
+    marathi: ""
+  
+  THREAT_FEED_UNAVAILABLE:
+    en: "Threat intelligence feeds are not available."
+    hindi: ""
+    marathi: ""
+  
+  INFRASTRUCTURE_UNAVAILABLE:
+    en: "Domain registration and DNS checks could not be completed."
+    hindi: ""
+    marathi: ""
+
+# Verdict-level advice (shown at the top of the result)
+advice:
+  DANGEROUS:
+    en: "Do not enter passwords, card details, or UPI PIN. Do not approve any payment. Contact the organization using the phone number on your card, passbook, or their official app."
+    hindi: ""
+    marathi: ""
+  
+  SUSPICIOUS:
+    en: "Verify this link through an official channel (phone number on your card, official app, or website you typed yourself) before entering any information or making a payment."
+    hindi: ""
+    marathi: ""
+  
+  LIKELY_SAFE:
+    en: "No warning signs found by the checks that ran. This is not a guarantee. If something feels wrong, verify through an official channel."
+    hindi: ""
+    marathi: ""
+  
+  UNKNOWN:
+    en: "Not enough information to assess risk. Verify this link through an official channel before entering information or making a payment."
+    hindi: ""
+    marathi: ""
+
+# Coverage messages (appended to LIKELY_SAFE when reduced coverage)
+coverage_note:
+  sandbox_unavailable:
+    en: "The page itself could not be analyzed (browser sandbox unavailable or page unreachable). This verdict is based on the address and registration information only."
+    hindi: ""
+    marathi: ""
+  
+  no_external_reputation:
+    en: "External reputation services (Google Safe Browsing, VirusTotal) were not available for this check."
+    hindi: ""
+    marathi: ""
+  
+  limited_checks:
+    en: "Only {completed_count} of {total_count} check groups completed. The verdict is based on limited information."
+    hindi: ""
+    marathi: ""
