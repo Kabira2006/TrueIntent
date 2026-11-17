@@ -57,7 +57,7 @@ class DomainRecord(Base):
 
 
 class BrandReference(Base):
-    """One real brand's official domain plus its picture fingerprint."""
+    """Brand reference with perceptual hashes for visual matching."""
 
     __tablename__ = "brand_references"
 
@@ -67,10 +67,24 @@ class BrandReference(Base):
         server_default=text("gen_random_uuid()"),
         default=uuid.uuid4,
     )
+    brand_id: Mapped[str] = mapped_column(String(100), nullable=False)
     brand_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    official_domain: Mapped[str] = mapped_column(String(255), nullable=False)
-    # Perceptual hash signature: a short fingerprint of the logo/page look.
-    phash_signature: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    official_domains: Mapped[list] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    final_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reference_type: Mapped[str] = mapped_column(String(50), nullable=False, server_default=text("'login'"))
+    capture_quality: Mapped[str] = mapped_column(String(20), nullable=False)  # good, poor, failed
+    
+    # Perceptual hashes (64-bit hex strings)
+    phash_hex: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    dhash_hex: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    upper_phash_hex: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    
+    # Favicon hashes
+    favicon_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    favicon_phash_hex: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
