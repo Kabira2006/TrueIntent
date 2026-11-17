@@ -1,0 +1,225 @@
+name: CI
+
+on:
+  push:
+    branches: [main, rebuild/**]
+  pull_request:
+    branches: [main]
+
+jobs:
+  secrets-check:
+    name: Secrets Check
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for comprehensive check
+
+      - name: Check for secrets in codebase
+        run: |
+          # Check for common secret patterns
+          echo "🔍 Scanning for potential secrets..."
+          
+          # Patterns to detect
+          FOUND=0
+          
+          # API keys
+          if git grep -E "api_key\s*=\s*['\"][^'\"]{20,}" -- '*.py' '*.js' '*.ts' '*.yml' '*.yaml' '*.json' || true | grep -v "PLACEHOLDER\|EXAMPLE\|YOUR_"; then
+            echo "❌ Found potential API key"
+            FOUND=1
+          fi
+          
+          # AWS keys
+          if git grep -E "AKIA[0-9A-Z]{16}" -- . || true; then
+            echo "❌ Found potential AWS access key"
+            FOUND=1
+          fi
+          
+          # Private keys
+          if git grep -E "BEGIN (RSA|DSA|EC|OPENSSH) PRIVATE KEY" -- . || true; then
+            echo "❌ Found potential private key"
+            FOUND=1
+          fi
+          
+          # Generic secrets
+          if git grep -E "(secret|password|token)\s*=\s*['\"][^'\"]{12,}" -- '*.py' '*.js' '*.ts' || true | grep -v "PLACEHOLDER\|EXAMPLE\|YOUR_\|TEST\|dummy"; then
+            echo "❌ Found potential secret/password/token"
+            FOUND=1
+          fi
+          
+          # Check .env files are not tracked
+          if git ls-files | grep -E "\.env$" | grep -v "\.env\.example"; then
+            echo "❌ Found .env file in git"
+            FOUND=1
+          fi
+          
+          if [ $FOUND -eq 0 ]; then
+            echo "✅ No secrets found in codebase"
+          else
+            echo "❌ Potential secrets detected. Please review and remove them."
+            exit 1
+          fi
+
+  backend-lint:
+    name: Backend Lint (ruff)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: link-security-analyzer/backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: link-security-analyzer/backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff
+
+      - name: Lint with ruff
+        run: |
+          ruff check app/ tests/ --output-format=github
+
+  backend-tests:
+    name: Backend Tests (pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: link-security-analyzer/backend
+
+    services:
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: trueintent
+          POSTGRES_PASSWORD: trueintent
+          POSTGRES_DB: trueintent
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: link-security-analyzer/backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run unit tests (excluding integration tests)
+        env:
+          DATABASE_URL: postgresql+asyncpg://trueintent:trueintent@localhost:5432/trueintent
+          SYNC_DATABASE_URL: postgresql+psycopg2://trueintent:trueintent@localhost:5432/trueintent
+          REDIS_URL: redis://localhost:6379/0
+        run: |
+          pytest tests/ -v -m "not integration" --tb=short --maxfail=5
+
+      - name: Run SSRF security suite
+        env:
+          DATABASE_URL: postgresql+asyncpg://trueintent:trueintent@localhost:5432/trueintent
+          SYNC_DATABASE_URL: postgresql+psycopg2://trueintent:trueintent@localhost:5432/trueintent
+          REDIS_URL: redis://localhost:6379/0
+        run: |
+          pytest tests/security/test_ssrf.py -v --tb=short
+
+  frontend-lint:
+    name: Frontend Lint & Type Check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: link-security-analyzer/frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: link-security-analyzer/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+  frontend-tests:
+    name: Frontend Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: link-security-analyzer/frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: link-security-analyzer/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test -- --passWithNoTests
+
+  frontend-build:
+    name: Frontend Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: link-security-analyzer/frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: link-security-analyzer/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+        env:
+          NEXT_PUBLIC_API_BASE_URL: http://localhost:8000

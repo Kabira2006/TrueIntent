@@ -47,6 +47,15 @@ class Settings(BaseSettings):
 
     rate_limit_scan_per_min: int = Field(default=20)
     rate_limit_get_per_min: int = Field(default=120)
+    rate_limit_per_ip: int = Field(default=60, description="Rate limit per client IP per minute")
+    max_queue_length: int = Field(default=100, description="Maximum task queue length")
+    max_concurrent_scans: int = Field(default=10, description="Maximum concurrent scans")
+    max_input_length: int = Field(default=2048, description="Maximum input URL length")
+
+    # Retention and cleanup
+    artifact_ttl_hours: int = Field(default=48, description="Hours to keep screenshots and HTML")
+    result_cache_ttl_days: int = Field(default=7, description="Days to keep cached scan results")
+    store_query_string: bool = Field(default=True, description="Store query strings in URLs")
 
     cors_origins: str = Field(default="http://localhost:3000")
 

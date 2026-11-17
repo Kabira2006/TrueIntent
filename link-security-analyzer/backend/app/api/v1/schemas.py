@@ -2,8 +2,9 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.config import get_settings
 from app.core.aggregator import AdvisoryPillar, OverallIndicator
 
 
@@ -12,7 +13,18 @@ class ScanRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    input: str = Field(min_length=1, max_length=2048)
+    input: str = Field(min_length=1)
+    
+    @field_validator("input")
+    @classmethod
+    def validate_input_length(cls, value: str) -> str:
+        """Validate input length against config."""
+        max_length = get_settings().max_input_length
+        if len(value) > max_length:
+            raise ValueError(
+                f"Input too long: {len(value)} characters (max {max_length})"
+            )
+        return value
 
 
 class FastPathSummary(BaseModel):

@@ -47,6 +47,9 @@ services:
       - "8000:8000"
     volumes:
       - ./backend/app:/code/app
+      - ./backend/tests:/code/tests
+      - ./backend/scripts:/code/scripts
+      - ./backend/data:/code/data
     depends_on:
       postgres:
         condition: service_healthy
@@ -85,6 +88,9 @@ services:
       CELERY_WORKER_CONCURRENCY: ${CELERY_WORKER_CONCURRENCY:-1}
     volumes:
       - ./backend/app:/code/app
+      - ./backend/tests:/code/tests
+      - ./backend/scripts:/code/scripts
+      - ./backend/data:/code/data
     depends_on:
       postgres:
         condition: service_healthy

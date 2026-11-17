@@ -1,5 +1,7 @@
 # TrueIntent
 
+[![CI](https://github.com/Kabira2006/TrueIntent/actions/workflows/ci.yml/badge.svg)](https://github.com/Kabira2006/TrueIntent/actions/workflows/ci.yml)
+
 TrueIntent is a research prototype that examines links, UPI payment links, and QR text and reports explainable indicators rather than a final judgment.
 
 ## Quick start

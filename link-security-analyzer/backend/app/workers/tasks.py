@@ -264,3 +264,79 @@ def _domain_age(signal_vector: Any) -> int | None:
         return None
     value = signal_vector.get("domain_age_days")
     return value if isinstance(value, int) and value >= 0 else None
+
+
+
+@celery_app.task(name="app.workers.tasks.cleanup_old_artifacts")
+def cleanup_old_artifacts() -> dict[str, int]:
+    """Delete old screenshots and cached results based on retention policy.
+    
+    Runs periodically via Celery Beat (every 6 hours).
+    Returns counts of artifacts deleted.
+    """
+    settings = get_settings()
+    now = datetime.now(_UTC)
+    cutoff_timestamp = now.timestamp() - (settings.artifact_ttl_hours * 3600)
+    
+    # Delete old artifact files (screenshots, favicons, HTML)
+    artifacts_deleted = 0
+    if _ARTIFACTS_DIR.exists():
+        for artifact_file in _ARTIFACTS_DIR.glob("*"):
+            try:
+                # Files are named with TTL timestamp: {id}_{type}_{ttl}.ext
+                parts = artifact_file.stem.split("_")
+                if len(parts) >= 3:
+                    try:
+                        file_ttl = float(parts[-1])
+                        if now.timestamp() > file_ttl:
+                            artifact_file.unlink()
+                            artifacts_deleted += 1
+                    except (ValueError, IndexError):
+                        # File doesn't follow naming convention, check mtime
+                        if artifact_file.stat().st_mtime < cutoff_timestamp:
+                            artifact_file.unlink()
+                            artifacts_deleted += 1
+            except (OSError, FileNotFoundError) as error:
+                logger.warning(
+                    "Could not delete artifact file=%s error=%s",
+                    artifact_file,
+                    type(error).__name__,
+                )
+    
+    # Delete old cached scan results from database
+    # (scans older than result_cache_ttl_days)
+    cache_cutoff = now.timestamp() - (settings.result_cache_ttl_days * 86400)
+    cache_cutoff_datetime = datetime.fromtimestamp(cache_cutoff, tz=_UTC)
+    
+    results_deleted = 0
+    with closing(get_sync_session()) as session_generator:
+        session = next(session_generator)
+        try:
+            # Delete old completed scans
+            old_scans = session.query(ScanJob).filter(
+                ScanJob.completed_at < cache_cutoff_datetime,
+                ScanJob.status.in_(["COMPLETED", "complete_partial", "FAILED"])
+            ).all()
+            
+            results_deleted = len(old_scans)
+            for scan in old_scans:
+                session.delete(scan)
+            
+            session.commit()
+            logger.info(
+                "Cleanup completed: artifacts_deleted=%d results_deleted=%d",
+                artifacts_deleted,
+                results_deleted,
+            )
+        except Exception as error:
+            logger.error(
+                "Cleanup failed: error_type=%s",
+                type(error).__name__,
+                exc_info=True,
+            )
+            session.rollback()
+    
+    return {
+        "artifacts_deleted": artifacts_deleted,
+        "results_deleted": results_deleted,
+    }
