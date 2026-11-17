@@ -252,10 +252,10 @@ def fetch_urlhaus_urls(auth_key: str | None = None) -> list[dict[str, Any]]:
 
 def fetch_tranco_top(limit: int = 1000) -> list[dict[str, Any]]:
     """Fetch Tranco top-N domains (benign sample)."""
-    # Use a fixed list ID for reproducibility
-    list_id = "9MNLX"
-    url = f"https://tranco-list.eu/download/{list_id}/1000000"
-    logger.info(f"Fetching Tranco list {list_id}, top {limit}")
+    # Use the latest daily list (permanent URL)
+    # This is the standard 1M list averaged over 30 days from all providers
+    url = "https://tranco-list.eu/top-1m.csv.zip"
+    logger.info(f"Fetching Tranco latest top-1M list, will use top {limit}")
 
     try:
         resp = httpx.get(url, timeout=60, follow_redirects=True)
