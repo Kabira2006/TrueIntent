@@ -63,16 +63,32 @@ async def _check_redis() -> bool:
         await client.aclose()
 
 
+async def _check_playwright() -> bool:
+    """Test that Playwright can launch a browser."""
+    try:
+        from playwright.async_api import async_playwright
+
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(headless=True)
+            await browser.close()
+        return True
+    except Exception as error:  # noqa: BLE001 - health check must never raise
+        logger.warning("playwright health check failed: %s", error)
+        return False
+
+
 @app.get("/healthz")
 async def healthz(response: Response) -> dict[str, object]:
     """Return 200 only when both Postgres and Redis answer."""
     db_ok = await _check_db()
     redis_ok = await _check_redis()
-    healthy = db_ok and redis_ok
+    playwright_ok = await _check_playwright()
+    healthy = db_ok and redis_ok and playwright_ok
     if not healthy:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
     return {
         "status": "ok" if healthy else "degraded",
         "database": db_ok,
         "redis": redis_ok,
+        "playwright": playwright_ok,
     }
