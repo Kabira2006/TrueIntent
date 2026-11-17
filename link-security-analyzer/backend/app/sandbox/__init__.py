@@ -6,5 +6,25 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from app.sandbox.browser import VisitResult, get_browser, visit
     from app.sandbox.dom_analyzer import analyze as analyze_dom, DOMAnalysisResult
+    from app.sandbox.visual import (
+        compute_hashes,
+        hamming_distance,
+        match_brands,
+        generate_signals,
+        BrandMatch,
+        VisualMatchResult,
+    )
 
-__all__ = ["VisitResult", "get_browser", "visit", "analyze_dom", "DOMAnalysisResult"]
+__all__ = [
+    "VisitResult",
+    "get_browser",
+    "visit",
+    "analyze_dom",
+    "DOMAnalysisResult",
+    "compute_hashes",
+    "hamming_distance",
+    "match_brands",
+    "generate_signals",
+    "BrandMatch",
+    "VisualMatchResult",
+]
