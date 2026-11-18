@@ -4,6 +4,7 @@ import {
   ArrowDown,
   ArrowRight,
   ArrowUpRight,
+  ImageUp,
   Clock3,
   Fingerprint,
   Link2,
@@ -26,9 +27,11 @@ import {
   submitScan,
   validateScanInput,
 } from "@/lib/api";
+import { analyzeOcrText } from "@/lib/ocr-analysis";
 
 const MAX_INPUT_LENGTH = 2048;
-const MAX_POLL_DURATION_MS = 60_000;
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_POLL_DURATION_MS = 90_000;
 const API_DOCS_URL = `${process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ?? "http://localhost:8000"}/docs`;
 const EXAMPLES = [
   {
@@ -59,6 +62,15 @@ interface ActiveScan {
   startedAt: number;
 }
 
+interface OcrResult {
+  extracted_text: string;
+  score: number;
+  signature: string;
+  reasons: string[];
+  ml_status: string;
+  embedded_url_checks: { url: string; verdict: string; risk_score: number; reasons: string[] }[];
+}
+
 export default function DashboardPage() {
   const [input, setInput] = useState("");
   const [activeScan, setActiveScan] = useState<ActiveScan | null>(null);
@@ -67,10 +79,29 @@ export default function DashboardPage() {
   const [retryKey, setRetryKey] = useState(0);
   const [timedOut, setTimedOut] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const [inputMode, setInputMode] = useState<"text" | "image">("text");
+  const [image, setImage] = useState<File | null>(null);
+  const [ocrResult, setOcrResult] = useState<OcrResult | null>(null);
+  const [ocrBusy, setOcrBusy] = useState(false);
+  const [ocrError, setOcrError] = useState<string | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [ocrProgress, setOcrProgress] = useState(0);
+
+  useEffect(() => {
+    if (!image) {
+      setImagePreview(null);
+      return;
+    }
+    const previewUrl = URL.createObjectURL(image);
+    setImagePreview(previewUrl);
+    return () => URL.revokeObjectURL(previewUrl);
+  }, [image]);
 
   const pollKey = activeScan ? [activeScan.accepted.poll_url, retryKey] : null;
   const terminal = (data?: ScanReport) =>
-    data?.status === "COMPLETED" || data?.status === "FAILED";
+    data?.status === "COMPLETED" ||
+    data?.status === "complete_partial" ||
+    data?.status === "FAILED";
   const poller = useSWR<ScanReport>(
     pollKey,
     ([url]) => fetchScanReport(url),
@@ -134,6 +165,76 @@ export default function DashboardPage() {
     }
   }, [input, poller]);
 
+  const analyzeScreenshot = async () => {
+    if (!image) {
+      setOcrError("Choose an image to analyze.");
+      return;
+    }
+    setOcrBusy(true);
+    setOcrError(null);
+    setOcrResult(null);
+    setOcrProgress(0);
+    let worker: {
+      recognize: (source: File) => Promise<{ data: { text: string } }>;
+      terminate: () => Promise<unknown>;
+    } | null = null;
+    try {
+      const { createWorker } = await import("tesseract.js");
+      worker = await createWorker("eng", 1, {
+        logger: (message) => {
+          if (message.status === "recognizing text") {
+            setOcrProgress(Math.round(message.progress * 100));
+          }
+        },
+      });
+      const { data } = await worker.recognize(image);
+      const extractedText = data.text.trim();
+      const analysis = analyzeOcrText(extractedText);
+      const embeddedUrlChecks = await Promise.all(
+        analysis.urls.slice(0, 3).map(async (rawUrl) => {
+          const url = /^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`;
+          try {
+            const accepted = await submitScan(url);
+            return {
+              url,
+              verdict: accepted.verdict.verdict,
+              risk_score: accepted.verdict.risk_score,
+              reasons: accepted.verdict.reasons,
+            };
+          } catch {
+            return { url, verdict: "UNAVAILABLE", risk_score: 0, reasons: ["URL check could not be completed."] };
+          }
+        }),
+      );
+      const urlRisk = embeddedUrlChecks.reduce(
+        (maximum, check) => Math.max(maximum, check.risk_score / 100),
+        0,
+      );
+      const urlReasons = embeddedUrlChecks.flatMap((check) =>
+        check.risk_score >= 40
+          ? [`Embedded URL '${check.url}' flagged by Module B (score ${(check.risk_score / 100).toFixed(2)})`, ...check.reasons]
+          : [],
+      );
+      setOcrResult({
+        extracted_text: extractedText,
+        score: Math.max(analysis.score, urlRisk),
+        signature: analysis.signature,
+        reasons: [...analysis.reasons, ...urlReasons],
+        ml_status: analysis.ml_status,
+        embedded_url_checks: embeddedUrlChecks,
+      });
+    } catch (error) {
+      setOcrError(
+        error instanceof Error
+          ? error.message
+          : "The screenshot could not be analyzed in this browser.",
+      );
+    } finally {
+      await worker?.terminate().catch(() => undefined);
+      setOcrBusy(false);
+    }
+  };
+
   const clearResult = () => {
     setActiveScan(null);
     setTimedOut(false);
@@ -180,7 +281,7 @@ export default function DashboardPage() {
           <p className="overline"><span /> LINK INTELLIGENCE / MODULE A</p>
           <h1>Look closer.<br /><em>Decide with context.</em></h1>
           <p className="hero-description">
-            Inspect a web address, UPI link, or QR text. TrueIntent surfaces
+            Inspect a web address, UPI link, QR text, or a screenshot of a message. TrueIntent surfaces
             explainable signals so you can make a more informed decision.
           </p>
           <div className="hero-proof">
@@ -208,6 +309,11 @@ export default function DashboardPage() {
             </div>
             <span className="input-limit">{input.length.toLocaleString()} / {MAX_INPUT_LENGTH}</span>
           </div>
+          <div className="input-mode-tabs" role="tablist" aria-label="Analysis input type">
+            <button type="button" role="tab" aria-selected={inputMode === "text"} onClick={() => setInputMode("text")}>Link or text</button>
+            <button type="button" role="tab" aria-selected={inputMode === "image"} onClick={() => setInputMode("image")}><ImageUp size={15} /> Upload screenshot</button>
+          </div>
+          {inputMode === "text" ? <>
           <label className="sr-only" htmlFor="analysis-input">URL, UPI link, or QR text</label>
           <textarea
             id="analysis-input"
@@ -261,7 +367,53 @@ export default function DashboardPage() {
               {submitting ? <LoaderCircle size={17} className="spin" /> : <>Analyze <ArrowRight size={17} /></>}
             </button>
           </div>
+          </> : <div className="screenshot-input">
+            <label htmlFor="screenshot-file">Upload a message screenshot</label>
+            <p>PNG, JPEG, WebP, BMP, or TIFF · up to 10 MB</p>
+            <input
+              id="screenshot-file"
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/bmp,image/tiff"
+              onChange={(event) => {
+                const selected = event.target.files?.[0] ?? null;
+                if (selected && selected.size > MAX_IMAGE_BYTES) {
+                  setImage(null);
+                  setOcrError("Image must be 10 MB or smaller.");
+                } else {
+                  setImage(selected);
+                  setOcrError(null);
+                }
+                setOcrResult(null);
+              }}
+              disabled={ocrBusy}
+            />
+            {imagePreview && <img className="screenshot-preview" src={imagePreview} alt="Selected screenshot preview" />}
+            {ocrError && <div className="alert alert-error" role="alert"><X size={17} /> {ocrError}</div>}
+            <p className="privacy-note">Text is extracted for analysis. The upload is processed in memory and is not retained.</p>
+            <button className="analyze-button" type="button" onClick={() => void analyzeScreenshot()} disabled={!image || ocrBusy}>
+            {ocrBusy ? <><LoaderCircle size={17} className="spin" /> Reading image {ocrProgress}%</> : <>Analyze screenshot <ArrowRight size={17} /></>}
+            </button>
+          </div>}
         </div>
+
+        {ocrResult && <section className="ocr-report panel" aria-live="polite">
+          <p className="eyebrow">SCREENSHOT ANALYSIS</p>
+          <h2>{ocrResult.score >= 0.4 ? "Scam wording indicators detected" : "No configured scam wording detected"}</h2>
+          <p>Pattern group: {ocrResult.signature.replaceAll("_", " ")}</p>
+          <p>Heuristic score: {Math.round(ocrResult.score * 100)} / 100 · {ocrResult.ml_status}</p>
+          <h3>Extracted text</h3>
+          <pre>{ocrResult.extracted_text || "No text was detected in this image."}</pre>
+          <h3>Reasons</h3>
+          {ocrResult.reasons.length ? <ul>{ocrResult.reasons.map((reason, index) => <li key={`${index}-${reason}`}>{reason}</li>)}</ul> : <p>No configured phrases matched. This does not guarantee a message is legitimate.</p>}
+          {ocrResult.embedded_url_checks.length > 0 && <>
+            <h3>Links found in the image</h3>
+            <ul>{ocrResult.embedded_url_checks.map((check) => <li key={check.url}>
+              <strong>{check.url}</strong> — {check.verdict} (score {check.risk_score}/100)
+              {check.reasons.length > 0 && <ul>{check.reasons.map((reason, index) => <li key={`${check.url}-${index}`}>{reason}</li>)}</ul>}
+            </li>)}</ul>
+            {analyzeOcrText(ocrResult.extracted_text).urls.length > 3 && <p>Only the first three links were checked.</p>}
+          </>}
+        </section>}
 
         {activeScan && (
           <section className="results-section" aria-live="polite">
@@ -328,7 +480,7 @@ export default function DashboardPage() {
                 <button type="button" className="text-button" onClick={retryPolling}>Continue checking</button>
               </div>
             )}
-            {report?.status === "FAILED" && (
+            {(report?.status === "FAILED" || report?.status === "complete_partial") && (
               <div className="alert alert-warning" role="status">
                 <X size={18} />
                 The scan did not finish successfully. Any available indicators below are retained partial results.

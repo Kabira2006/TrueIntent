@@ -95,6 +95,18 @@ h2 { margin: 0; font-size: 19px; letter-spacing: -.025em; font-weight: 650; }
 .input-panel textarea::placeholder { color: #596970; }
 .input-panel textarea:focus { outline: none; border-color: #5bc3a0; box-shadow: 0 0 0 3px rgba(112, 225, 189, .08); }
 .input-panel textarea:disabled { opacity: .65; }
+.input-mode-tabs { display: flex; gap: 8px; margin: 0 0 16px; }
+.input-mode-tabs button { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 8px; padding: 9px 13px; background: transparent; color: var(--muted); cursor: pointer; }
+.input-mode-tabs button[aria-selected="true"] { border-color: var(--mint); color: var(--mint); background: rgba(112, 225, 189, .07); }
+.screenshot-input { border: 1px dashed #526466; border-radius: 12px; padding: 20px; }
+.screenshot-input > label { display: block; font-weight: 650; }
+.screenshot-input > p { color: var(--muted); font-size: 13px; }
+.screenshot-input input[type="file"] { display: block; max-width: 100%; margin: 14px 0; }
+.screenshot-preview { display: block; max-width: min(100%, 420px); max-height: 360px; object-fit: contain; margin: 14px 0; border-radius: 8px; border: 1px solid var(--line); }
+.ocr-report { margin-top: 18px; padding: 24px; }
+.ocr-report h2 { margin: 4px 0 8px; }
+.ocr-report pre { max-height: 280px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 14px; border-radius: 8px; background: rgba(0,0,0,.18); }
+.ocr-report li { margin: 7px 0; }
 .input-meta { display: flex; justify-content: space-between; gap: 12px; color: var(--faint); font-size: 10px; margin-top: 8px; }
 .limit-warning { color: var(--amber); }
 .input-footer { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; margin-top: 21px; }

@@ -7,10 +7,8 @@ from collections.abc import Iterator
 from types import SimpleNamespace
 
 import pytest
-from billiard.exceptions import SoftTimeLimitExceeded
-
-from app.core.sandbox import SandboxResult
 from app.db.models import BrandReference
+from app.sandbox.browser import VisitResult
 from app.workers import tasks
 from app.workers.celery_app import celery_app
 
@@ -80,43 +78,36 @@ def _install_session(monkeypatch: pytest.MonkeyPatch, job: SimpleNamespace) -> _
     return session
 
 
-def test_successful_sandbox_persists_only_hash_and_keeps_fast_path(
+def test_successful_sandbox_persists_metadata_without_screenshot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     job = _job()
     fast_path_technical = job.lexical_indicators
     session = _install_session(monkeypatch, job)
-    session.references = [
-        SimpleNamespace(
-            brand_name="Example Bank",
-            official_domain="example.com",
-            phash_signature="0000000000000000",
-        )
-    ]
 
-    async def scan_page(url: str, *, domain_age_days: int | None = None):
-        assert domain_age_days == 45
-        return SandboxResult(
-            status="NO_INDICATORS",
-            indicators=[],
-            features={
-                "phash": "0000000000000000",
-                "final_host": "copycat.test",
-            },
+    async def visit(url: str, *, budget_s: float = 15.0):
+        assert url == "https://example.com/path"
+        return VisitResult(
+            final_url="https://example.com/",
+            http_status=200,
+            title="Example",
+            rendered_html='<html><form><input type="password"></form></html>',
+            screenshot_png=b"not-persisted",
         )
 
-    monkeypatch.setattr(tasks, "scan_page", scan_page)
-    result = tasks.sandbox_scan.run(str(job.id))
+    monkeypatch.setattr(tasks, "visit", visit)
+    result = tasks.run_sandbox.run(str(job.id))
 
     assert result == {"status": "COMPLETED", "scan_id": str(job.id)}
-    assert session.commits == 1
+    assert session.commits == 2
     assert job.lexical_indicators == fast_path_technical
-    assert job.sandbox_indicators["features"]["phash"] == "0000000000000000"
-    match = job.sandbox_indicators["indicators"][0]
-    assert match["code"] == "VISUAL_BRAND_IMPERSONATION"
-    assert match["evidence"]["brand"] == "Example Bank"
+    assert job.sandbox_indicators["features"]["http_status"] == 200
+    assert job.sandbox_indicators["features"]["screenshot_retained"] is False
+    assert "HAS_PASSWORD_FIELD" in {
+        indicator["code"] for indicator in job.sandbox_indicators["indicators"]
+    }
+    assert job.status == "COMPLETED"
     assert "image" not in str(job.sandbox_indicators).lower()
-    assert job.signal_vector["domain_age_days"] == 45
     assert job.error_message is None
     assert job.completed_at is not None
 
@@ -124,16 +115,14 @@ def test_successful_sandbox_persists_only_hash_and_keeps_fast_path(
 def test_celery_worker_is_bounded_and_acks_after_execution() -> None:
     assert celery_app.conf.worker_concurrency == 2
     assert celery_app.conf.task_acks_late is True
-    assert tasks.sandbox_scan.max_retries == 0
-    assert tasks.sandbox_scan.soft_time_limit == 45
-    assert tasks.sandbox_scan.time_limit == 60
+    assert tasks.run_sandbox.max_retries == 0
 
 
 @pytest.mark.parametrize(
     ("exception", "expected"),
     [
         (RuntimeError("browser error"), "Sandbox check failed (RuntimeError)."),
-        (SoftTimeLimitExceeded(), "Sandbox soft time limit exceeded."),
+        (TimeoutError(), "Sandbox check timed out."),
     ],
 )
 def test_failed_sandbox_preserves_fast_path_results(
@@ -145,15 +134,15 @@ def test_failed_sandbox_preserves_fast_path_results(
     fast_path_technical = job.lexical_indicators
     session = _install_session(monkeypatch, job)
 
-    async def fail_scan(url: str, *, domain_age_days: int | None = None):
+    async def fail_visit(url: str, *, budget_s: float = 15.0):
         raise exception
 
-    monkeypatch.setattr(tasks, "scan_page", fail_scan)
-    result = tasks.sandbox_scan.run(str(job.id))
+    monkeypatch.setattr(tasks, "visit", fail_visit)
+    result = tasks.run_sandbox.run(str(job.id))
 
-    assert result["status"] == "FAILED"
-    assert session.commits == 1
-    assert job.status == "FAILED"
+    assert result["status"] == "complete_partial"
+    assert session.commits == 2
+    assert job.status == "complete_partial"
     assert job.error_message == expected
     assert job.lexical_indicators == fast_path_technical
     assert job.sandbox_indicators["status"] == "UNAVAILABLE"

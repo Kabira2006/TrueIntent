@@ -1,23 +1,29 @@
 # TrueIntent Celery worker (background browser sandbox).
-# Uses the official Playwright Python image whose version matches the pinned
-# `playwright` package in requirements.txt (playwright==1.48.0), so the
-# bundled Chromium already works and no `playwright install` is needed.
-FROM mcr.microsoft.com/playwright/python:v1.48.0-jammy
+# Python 3.11 matches the backend and shared pinned dependency stack.
+FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 WORKDIR /code
 
 COPY requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir playwright==1.48.0 && \
+    apt-get update && apt-get install -y --no-install-recommends \
+        libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
+        libdbus-1-3 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 \
+        libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2 libatspi2.0-0 \
+        && apt-get clean && rm -rf /var/lib/apt/lists/* && \
+    playwright install chromium
 
 COPY data ./data
 COPY app ./app
 
-# The Playwright image ships a non-root `pwuser`; run as that user so
-# hostile pages are never opened as root.
+RUN groupadd -r pwgroup && useradd -r -g pwgroup -u 10001 pwuser && \
+    chown -R pwuser:pwgroup /code /ms-playwright
 USER pwuser
 
 # Start the configured worker that consumes sandbox scan tasks from Redis.

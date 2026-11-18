@@ -95,7 +95,7 @@ class ScanJob(Base):
     __table_args__ = (
         CheckConstraint("payload_type IN ('URL','UPI_DEEP_LINK','QR_TEXT')", name="ck_scan_jobs_payload_type"),
         CheckConstraint(
-            "status IN ('PENDING','FAST_PATH_DONE','COMPLETED','FAILED')",
+            "status IN ('PENDING','FAST_PATH_DONE','sandbox_queued','sandbox_running','COMPLETED','complete_partial','FAILED')",
             name="ck_scan_jobs_status",
         ),
         Index("ix_scan_jobs_status", "status"),

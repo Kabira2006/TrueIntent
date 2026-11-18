@@ -4,9 +4,6 @@ import uuid
 from collections.abc import AsyncIterator
 
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.api.v1 import endpoints
 from app.config import Settings
 from app.core.aggregator import build_report
@@ -16,6 +13,8 @@ from app.core.threat_feeds import FeedLookup, ThreatFeedResult
 from app.db.models import ScanJob
 from app.db.session import get_db
 from app.main import app
+from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class _Redis:
@@ -181,14 +180,14 @@ def test_enqueue_sandbox_dispatches_celery_task(
 ) -> None:
     scan_id = uuid.uuid4()
     queued: list[str] = []
-    monkeypatch.setattr(endpoints.sandbox_scan, "delay", queued.append)
+    monkeypatch.setattr(endpoints.run_sandbox, "delay", queued.append)
 
     endpoints.enqueue_sandbox(scan_id)
 
     assert queued == [str(scan_id)]
 
 
-def test_queue_failure_marks_saved_scan_failed(
+def test_queue_failure_returns_pollable_partial_report(
     api_dependencies, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     client, session, _ = api_dependencies
@@ -202,13 +201,19 @@ def test_queue_failure_marks_saved_scan_failed(
     monkeypatch.setattr(endpoints, "enqueue_sandbox", fail_enqueue)
     response = client.post("/api/v1/scan", json={"input": "https://example.com/path"})
 
-    assert response.status_code == 503
+    assert response.status_code == 202
+    assert response.json()["status"] == "complete_partial"
+    scan_id = response.json()["scan_id"]
     job = session.added[0]
-    assert job.status == "FAILED"
+    assert job.status == "complete_partial"
     assert job.completed_at is not None
     assert job.sandbox_indicators["status"] == "UNAVAILABLE"
     assert job.sandbox_indicators["indicators"][0]["code"] == "SANDBOX_UNAVAILABLE"
-    assert job.final_advisory_status == "UNKNOWN"
+    assert job.final_advisory_status == "SOME_INDICATORS_DETECTED"
+
+    report = client.get(f"/api/v1/scan/{scan_id}")
+    assert report.status_code == 200
+    assert report.json()["status"] == "complete_partial"
 
 
 def test_get_scan_returns_persisted_three_pillar_report(

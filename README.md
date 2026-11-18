@@ -18,6 +18,8 @@ Open `http://localhost:3000` for the frontend or
 `http://localhost:8000/docs` for the API documentation. The frontend submits
 inputs and polls the API's returned `poll_url` for the persisted three-pillar
 report. A placeholder such as `https://example.com` can be used for a demo.
+The main page also supports screenshot OCR in the browser; the first use needs
+internet access to download Tesseract's English recognition data.
 
 ```powershell
 $accepted = Invoke-RestMethod -Method Post `
@@ -31,6 +33,7 @@ To run the backend tests, change to
 `link-security-analyzer/backend/` and run `python -m pytest -q`. The
 evaluation tools and their limitations are described in
 [`link-security-analyzer/README.md`](link-security-analyzer/README.md).
+
 
 ## Project journal
 Progress and plain-language explanations live in

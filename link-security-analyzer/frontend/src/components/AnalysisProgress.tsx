@@ -12,8 +12,14 @@ export function AnalysisProgress({
   status: ScanStatus;
   payloadType: PayloadType;
 }) {
-  const activeIndex = status === "FAST_PATH_DONE" ? 1 : 2;
-  const failed = status === "FAILED";
+  const activeIndex =
+    status === "PENDING" ||
+    status === "FAST_PATH_DONE" ||
+    status === "sandbox_queued" ||
+    status === "sandbox_running"
+      ? 1
+      : 2;
+  const failed = status === "FAILED" || status === "complete_partial";
   return (
     <ol className="progress-list" aria-label="Analysis progress">
       {STEPS.map((step, index) => {

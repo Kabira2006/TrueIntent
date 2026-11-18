@@ -1,5 +1,12 @@
 export type PayloadType = "URL" | "UPI_DEEP_LINK" | "QR_TEXT";
-export type ScanStatus = "FAST_PATH_DONE" | "COMPLETED" | "FAILED";
+export type ScanStatus =
+  | "PENDING"
+  | "FAST_PATH_DONE"
+  | "sandbox_queued"
+  | "sandbox_running"
+  | "COMPLETED"
+  | "complete_partial"
+  | "FAILED";
 export type PillarStatus =
   | "NOT_APPLICABLE"
   | "NO_INDICATORS"
@@ -35,9 +42,14 @@ export interface FastPathSummary {
 
 export interface ScanAccepted {
   scan_id: string;
-  status: "FAST_PATH_DONE" | "COMPLETED";
+  status: "FAST_PATH_DONE" | "COMPLETED" | "complete_partial";
   fast_path_summary: FastPathSummary;
   poll_url: string;
+  verdict: {
+    verdict: "DANGEROUS" | "SUSPICIOUS" | "LIKELY_SAFE" | "UNKNOWN";
+    risk_score: number;
+    reasons: string[];
+  };
 }
 
 export interface ScanReport {
@@ -211,7 +223,17 @@ function isScanAccepted(value: unknown): value is ScanAccepted {
   const summary = value.fast_path_summary;
   return (
     typeof value.scan_id === "string" &&
-    (value.status === "FAST_PATH_DONE" || value.status === "COMPLETED") &&
+    isRecord(value.verdict) &&
+    (value.verdict.verdict === "DANGEROUS" ||
+      value.verdict.verdict === "SUSPICIOUS" ||
+      value.verdict.verdict === "LIKELY_SAFE" ||
+      value.verdict.verdict === "UNKNOWN") &&
+    typeof value.verdict.risk_score === "number" &&
+    Array.isArray(value.verdict.reasons) &&
+    value.verdict.reasons.every((reason) => typeof reason === "string") &&
+    (value.status === "FAST_PATH_DONE" ||
+      value.status === "COMPLETED" ||
+      value.status === "complete_partial") &&
     typeof value.poll_url === "string" &&
     isPayloadType(summary.payload_type) &&
     (typeof summary.domain === "string" || summary.domain === null) &&
@@ -228,8 +250,12 @@ function isScanReport(value: unknown): value is ScanReport {
   const report = value.advisory_report;
   return (
     typeof value.scan_id === "string" &&
-    (value.status === "FAST_PATH_DONE" ||
+    (value.status === "PENDING" ||
+      value.status === "FAST_PATH_DONE" ||
+      value.status === "sandbox_queued" ||
+      value.status === "sandbox_running" ||
       value.status === "COMPLETED" ||
+      value.status === "complete_partial" ||
       value.status === "FAILED") &&
     (value.overall_indicator === "NO_INDICATORS_DETECTED" ||
       value.overall_indicator === "SOME_INDICATORS_DETECTED" ||

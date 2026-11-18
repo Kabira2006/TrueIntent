@@ -1,30 +1,31 @@
 """Synchronous Celery task boundary for async sandbox scanning."""
 
 import asyncio
+import json
 import logging
-import os
+import tempfile
 import uuid
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from billiard.exceptions import SoftTimeLimitExceeded
 
 from app.config import get_settings
 from app.core.aggregator import AdvisoryPillar, build_report
-from app.core.models import Indicator
-from app.sandbox.browser import visit
 from app.db.models import BrandReference, ScanJob
 from app.db.session import get_sync_session
+from app.sandbox import dom_analyzer, visual
+from app.sandbox.browser import visit
 from app.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 _UTC = timezone.utc  # noqa: UP017 - local validation runtime is Python 3.10
 
 # Artifact storage directory (temporary files with TTL)
-_ARTIFACTS_DIR = Path("/tmp/trueintent_artifacts")
-_ARTIFACTS_DIR.mkdir(exist_ok=True)
+_ARTIFACTS_DIR = Path(tempfile.gettempdir()) / "trueintent_artifacts"
 
 
 @celery_app.task(
@@ -66,7 +67,7 @@ def run_sandbox(self: Any, scan_id: str) -> dict[str, str]:
             result = asyncio.run(visit(job.input_payload, budget_s=15.0))
 
             # Store compact result
-            _store_visit_result(job, result)
+            _store_visit_result(job, result, session)
 
             # Check for failure conditions
             if result.errors:
@@ -83,12 +84,11 @@ def run_sandbox(self: Any, scan_id: str) -> dict[str, str]:
             _fail_with_reason(job, "timeout", "Sandbox soft time limit exceeded.")
         except TimeoutError:
             _fail_with_reason(job, "timeout", "Sandbox check timed out.")
-        except Exception as error:  # noqa: BLE001 - persist failure and retain fast path
-            logger.error(
+        except Exception as error:
+            logger.exception(
                 "sandbox task failed scan_id=%s error_type=%s",
                 scan_id,
                 type(error).__name__,
-                exc_info=True,
             )
             _fail_with_reason(
                 job,
@@ -100,28 +100,89 @@ def run_sandbox(self: Any, scan_id: str) -> dict[str, str]:
         return {"status": job.status, "scan_id": scan_id}
 
 
-def _store_visit_result(job: ScanJob, result: Any) -> None:
-    """Store compact visit result with screenshot as artifact file."""
-    # Store screenshot as temporary file if available
-    screenshot_path = None
-    if result.screenshot_png:
-        ttl_timestamp = datetime.now(_UTC).timestamp() + (48 * 3600)  # 48h TTL
-        screenshot_path = (
-            _ARTIFACTS_DIR / f"{job.id}_screenshot_{int(ttl_timestamp)}.png"
-        )
-        screenshot_path.write_bytes(result.screenshot_png)
-        screenshot_path = str(screenshot_path)
-
-    # Store favicon as temporary file if available
-    favicon_path = None
-    if result.favicon_bytes:
-        ttl_timestamp = datetime.now(_UTC).timestamp() + (48 * 3600)
-        favicon_path = _ARTIFACTS_DIR / f"{job.id}_favicon_{int(ttl_timestamp)}.ico"
-        favicon_path.write_bytes(result.favicon_bytes)
-        favicon_path = str(favicon_path)
-
-    # Build compact indicators from visit result
+def _store_visit_result(job: ScanJob, result: Any, session: Any) -> None:
+    """Analyze rendered page content and store compact findings and hashes."""
     indicators: list[dict[str, Any]] = []
+    features: dict[str, Any] = {
+        "final_url": result.final_url,
+        "http_status": result.http_status,
+        "title": result.title,
+        "contacted_hosts_count": len(result.contacted_hosts),
+        "third_party_ratio": result.third_party_ratio,
+        "screenshot_retained": False,
+        "favicon_retained": False,
+        "redirect_count": len(result.redirect_chain),
+        "download_attempted": result.download_attempted,
+        "blocked_requests_count": len(result.blocked_requests),
+        **result.timings,
+    }
+
+    if result.rendered_html:
+        analysis = dom_analyzer.analyze(
+            result.rendered_html,
+            job.input_payload,
+            result.final_url,
+            headers=result.response_headers,
+            domain_age_days=_domain_age(job.signal_vector),
+            auto_download=result.download_attempted,
+            redirect_chain=[
+                {"url": hop.url, "status": hop.status}
+                for hop in result.redirect_chain
+            ],
+        )
+        indicators.extend(_normalize_signals(analysis.signals))
+
+    if result.screenshot_png:
+        hashes = visual.compute_hashes(
+            result.screenshot_png,
+            result.favicon_bytes,
+        )
+        features.update(
+            {
+                key: value
+                for key, value in hashes.items()
+                if key.endswith("_hex") or key == "favicon_sha256"
+            }
+        )
+        references = [
+            {
+                "brand_id": ref.brand_id,
+                "brand_name": ref.brand_name,
+                "official_domains": ref.official_domains,
+                "source_url": ref.source_url,
+                "phash_hex": ref.phash_hex,
+                "dhash_hex": ref.dhash_hex,
+                "upper_phash_hex": ref.upper_phash_hex,
+                "favicon_sha256": ref.favicon_sha256,
+                "favicon_phash_hex": ref.favicon_phash_hex,
+            }
+            for ref in session.query(BrandReference)
+        ]
+        parsed = urlsplit(result.final_url)
+        hostname = parsed.hostname or ""
+        registered_domain = _registered_domain(hostname)
+        dom_codes = {indicator["code"] for indicator in indicators}
+        visual_result = visual.match_brands(
+            hashes,
+            references,
+            registered_domain,
+        )
+        indicators.extend(
+            _normalize_signal_dicts(
+                visual.generate_signals(
+                    visual_result,
+                    has_credential_fields=bool(
+                        dom_codes
+                        & {
+                            "HAS_PASSWORD_FIELD",
+                            "HAS_CARD_FIELDS",
+                            "HAS_OTP_PIN_FIELD",
+                            "HAS_UPI_ID_FIELD",
+                        }
+                    ),
+                )
+            )
+        )
 
     # Add blocked request indicator if any
     if result.blocked_requests:
@@ -170,20 +231,59 @@ def _store_visit_result(job: ScanJob, result: Any) -> None:
     job.sandbox_indicators = {
         "status": pillar_status,
         "indicators": indicators,
-        "features": {
-            "final_url": result.final_url,
-            "http_status": result.http_status,
-            "title": result.title,
-            "contacted_hosts_count": len(result.contacted_hosts),
-            "third_party_ratio": result.third_party_ratio,
-            "screenshot_path": screenshot_path,
-            "favicon_path": favicon_path,
-            "redirect_count": len(result.redirect_chain),
-            "download_attempted": result.download_attempted,
-            "blocked_requests_count": len(result.blocked_requests),
-            **result.timings,
-        },
+        "features": features,
     }
+
+
+def _normalize_signals(signals: list[Any]) -> list[dict[str, Any]]:
+    """Convert analyzer signals without retaining page text or nested content."""
+    return _normalize_signal_dicts(
+        [
+            {
+                "id": signal.id,
+                "severity": signal.severity,
+                "explanation": signal.explain,
+                "evidence": signal.evidence,
+            }
+            for signal in signals
+        ]
+    )
+
+
+def _normalize_signal_dicts(signals: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for signal in signals:
+        evidence = signal.get("evidence", {})
+        safe_evidence = {
+            key: value
+            if isinstance(value, (str, int, float, bool)) or value is None
+            else json.dumps(value, ensure_ascii=True)[:500]
+            for key, value in evidence.items()
+            if key not in {"visible_text_excerpt", "forms", "html"}
+        }
+        severity = signal.get("severity", "info")
+        normalized.append(
+            {
+                "code": signal.get("id", "SANDBOX_SIGNAL"),
+                "severity": "high" if severity == "critical" else severity,
+                "message": signal.get("explanation", signal.get("message", "Page indicator detected.")),
+                "evidence": safe_evidence,
+                "points": signal.get("points", 0),
+            }
+        )
+    return normalized
+
+
+def _registered_domain(hostname: str) -> str:
+    """Return a registrable domain using the bundled suffix data only."""
+    import tldextract
+
+    extracted = tldextract.TLDExtract(
+        cache_dir=str(_ARTIFACTS_DIR / "suffix_cache"),
+        suffix_list_urls=(),
+        include_psl_private_domains=True,
+    )(hostname)
+    return extracted.top_domain_under_public_suffix or hostname
 
 
 def _classify_error(errors: list[str]) -> str:
@@ -234,19 +334,29 @@ def _fail_with_reason(job: ScanJob, reason: str, message: str) -> None:
 
 def _recompute_report(job: ScanJob) -> None:
     technical = _stored_pillar(job.lexical_indicators)
+    infrastructure = getattr(job, "infrastructure_indicators", None) or {
+        "status": "AVAILABLE",
+        "indicators": [],
+        "features": {},
+    }
+    feeds = getattr(job, "threat_feed_indicators", None) or {
+        "status": "AVAILABLE",
+        "indicators": [],
+        "features": {},
+    }
     transaction = _stored_pillar(job.transaction_indicators)
     sandbox = _stored_pillar(job.sandbox_indicators)
     report = build_report(
         technical,
-        {"status": "AVAILABLE", "indicators": [], "features": {}},
-        {"status": "AVAILABLE", "indicators": [], "features": {}},
+        infrastructure,
+        feeds,
         transaction if job.payload_type in {"UPI_DEEP_LINK", "QR_TEXT"} else None,
         sandbox,
         payload_type=job.payload_type,
     )
     job.final_advisory_status = report.overall_indicator
     prior_vector = job.signal_vector if isinstance(job.signal_vector, dict) else {}
-    job.signal_vector = {**report.signal_vector, **prior_vector}
+    job.signal_vector = {**prior_vector, **report.signal_vector}
     job.heuristic_score = report.heuristic_score
 
 
@@ -329,10 +439,9 @@ def cleanup_old_artifacts() -> dict[str, int]:
                 results_deleted,
             )
         except Exception as error:
-            logger.error(
+            logger.exception(
                 "Cleanup failed: error_type=%s",
                 type(error).__name__,
-                exc_info=True,
             )
             session.rollback()
     

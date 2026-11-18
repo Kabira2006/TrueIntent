@@ -26,6 +26,8 @@ If you do not code, start here. Read the "In one minute" section of the latest c
 - [Chapter R6: Reading what the page actually does](#chapter-r6-reading-what-the-page-actually-does)
 - [Chapter R7: Spotting look-alike pages](#chapter-r7-spotting-look-alike-pages)
 - [Chapter R8: From clues to a verdict you can explain](#chapter-r8-from-clues-to-a-verdict-you-can-explain)
+- [Chapter R12: Proof it works, and how to show it](#chapter-r12-proof-it-works-and-how-to-show-it)
+- [Chapter R13: Sandbox and report reliability (INCOMPLETE)](#chapter-r13-sandbox-and-report-reliability-incomplete)
 
 ## Chapter 0: The big picture and setup
 Date: 2026-10-16 | Commit message: chunk-0: repo rules, skeleton and journal
@@ -2895,3 +2897,59 @@ Caption: Notice three parallel tracks: systematic acceptance verification (crite
 **Release blocker:** An issue serious enough to delay the release. A bug that crashes on every URL is a blocker. A missing optional guide is not. We decided the 2 NOT RUN criteria are not blockers because core logic is verified.
 
 **Core logic vs integration:** Core logic is the algorithm (lexical analysis, scoring). Integration is the full pipeline (HTTP request → database → verdict). Core logic passing means the brain works. Integration blocked means the plumbing has an issue. Our core logic passes in unit tests even though end-to-end integration hit database errors.
+
+## Chapter R13: Sandbox and report reliability (INCOMPLETE)
+Date: 2026-11-18 | Commit message: phase-13: sandbox and report reliability
+
+### 1. In one minute
+We fixed the scan worker's Windows import failure and made failed browser queueing return a pollable partial report. The worker now runs the existing page-content and visual brand analyzers, stores only their clues and image hashes, and recomputes the report while keeping earlier technical signals. The focused API and worker tests passed. Full checks still have unrelated environment and repository failures, and Docker could not be reached, so the sandbox container itself was not verified.
+
+### 2. Why we did this
+The browser scan runs in the background. If its task could not be queued, the API returned an error without giving the user a scan ID to retrieve the saved fast checks. The worker also tried to create a Linux `/tmp` directory as soon as the module loaded, which stopped API and worker tests on Windows. The replacement browser task visited pages but skipped the existing page-content and visual analyzers. Finally, report recomputation dropped stored technical details.
+
+### 3. How it works
+
+```mermaid
+flowchart TD
+  A["Submit link"] --> B["Save fast report"]
+  B --> C{"Can queue browser task?"}
+  C -->|"Yes"| D["Worker visits page"]
+  C -->|"No"| E["Save partial status and unavailable clue"]
+  D --> F["Recompute report with stored signals"]
+  E --> G["Return scan ID and poll URL"]
+  F --> G
+```
+
+Notice that either the worker or the queue failure leaves a report that can be polled.
+
+### 4. Decisions and reasoning
+
+| decision | options considered | why we chose this | trade-off |
+|---|---|---|---|
+| Queue failure response | Return an HTTP error or a partial scan | A partial scan lets the user retrieve already-saved fast results | The client must display reduced coverage |
+| Temporary artifact path | Fixed Linux `/tmp` or the platform temp folder | The platform folder works on Windows and Linux | Location depends on the runtime |
+| Recomputed signals | Replace old vector or overlay recomputed values | Keep prior features while allowing recomputed values to refresh them | Previously unknown feature keys remain stored |
+
+### 5. What we built
+- `link-security-analyzer/backend/app/workers/tasks.py` - portable temp path and report recomputation that keeps stored technical data.
+- `link-security-analyzer/backend/app/workers/tasks.py` - page-content and visual analysis now run on the visit result; only compact clues and image hashes are persisted.
+- `link-security-analyzer/backend/app/api/v1/endpoints.py` - queue failures now persist and return a pollable partial result.
+- `link-security-analyzer/backend/app/api/v1/schemas.py` and `link-security-analyzer/frontend/src/lib/api.ts` - accepted partial status support.
+- `link-security-analyzer/backend/tests/test_api.py` - queue failure behavior coverage.
+- `docs/PROJECT_JOURNAL.md` - this chapter and table of contents entry.
+
+### 6. What actually happened
+The focused command `python -m pytest backend\\tests\\test_api.py backend\\tests\\test_sandbox_task.py -q` passed: 17 tests, including a password-field clue from rendered HTML. Ruff passed for the changed backend files. Frontend `npm run typecheck` exited successfully.
+
+The full test run could not collect two files: the sandbox integration test needs `aiohttp`, and `test_verdict.py` imports a `VerdictConfig` that is not present in this checkout. Excluding those files produced 367 passes, 53 failures, 4 skips, and 1 deselected test; those failures include unrelated platform and existing test/code mismatches. Repository-wide Ruff reported 113 findings outside the changed-file check. Docker commands could not connect to the Docker engine due to access denial, so no container build or live scan was verified.
+
+### 7. Limits and honest weaknesses
+The Playwright browser install and Chromium launch in Docker remain unverified. The broad test failures need separate diagnosis. The fast result retains its original verdict when the queue fails and marks the browser pillar unavailable; it does not claim the browser analysis ran.
+
+### 8. How to explain this to a judge in 30 seconds
+“If the background browser cannot start, TrueIntent still gives the user a scan ID and keeps the fast checks it already completed. We also made report recomputation preserve earlier technical clues. The focused worker and API tests pass, but this environment could not run Docker, and the existing full suite still has unrelated failures.”
+
+### 9. New terms
+**Pollable partial report:** A saved scan result that includes completed checks and clearly marks the checks that could not run.
+
+**Platform temporary folder:** A temporary storage location chosen by the operating system, such as `/tmp` on Linux or a user temp directory on Windows.

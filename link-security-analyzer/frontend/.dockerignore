@@ -2,6 +2,7 @@ node_modules/
 .next/
 out/
 coverage/
+.pytest_cache/
 .git/
 .env
 .env.*

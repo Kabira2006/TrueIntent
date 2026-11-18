@@ -80,7 +80,7 @@ class ScanAccepted(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     scan_id: str
-    status: Literal["FAST_PATH_DONE", "COMPLETED"]
+    status: Literal["FAST_PATH_DONE", "COMPLETED", "complete_partial"]
     fast_path_summary: FastPathSummary
     poll_url: str
     verdict: ScanVerdict
@@ -102,7 +102,15 @@ class ScanReport(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     scan_id: str
-    status: Literal["FAST_PATH_DONE", "COMPLETED", "FAILED"]
+    status: Literal[
+        "PENDING",
+        "FAST_PATH_DONE",
+        "sandbox_queued",
+        "sandbox_running",
+        "COMPLETED",
+        "complete_partial",
+        "FAILED",
+    ]
     overall_indicator: OverallIndicator
     advisory_report: AdvisoryReportResponse
     # This score is an uncalibrated internal feature, not a probability and is

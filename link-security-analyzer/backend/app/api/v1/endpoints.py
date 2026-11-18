@@ -176,7 +176,8 @@ async def create_scan(
                 scan_id,
                 type(error).__name__,
             )
-            job.status = "FAILED"
+            job.status = "complete_partial"
+            scan_status = "complete_partial"
             job.error_message = (
                 f"Sandbox task could not be queued ({type(error).__name__})."
             )
@@ -191,13 +192,8 @@ async def create_scan(
                     )
                 ],
             ).model_dump(mode="json")
-            job.final_advisory_status = "UNKNOWN"
             job.completed_at = datetime.now(_UTC)
             await session.commit()
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="The browser check could not be queued; the fast-path report was saved.",
-            ) from error
 
     coverage = CoverageOut(
         completed=sorted({c.group for c in fast_result.checks if c.group}),
